@@ -1,4 +1,4 @@
-use prometheus::{Encoder, Gauge, IntCounter, Opts, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, IntCounter, Registry, TextEncoder};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::task::JoinHandle;

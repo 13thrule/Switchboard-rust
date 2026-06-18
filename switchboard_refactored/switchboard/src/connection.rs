@@ -44,7 +44,7 @@ impl Connection {
         info!(peer = %self.peer, "connection accepted");
 
         let mut peek_buf = [0u8; 4];
-        let mut stream = self.stream;
+        let stream = self.stream;
         let peer = self.peer;
         let router = self.router.clone();
 
