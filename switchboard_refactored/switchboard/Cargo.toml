@@ -21,6 +21,10 @@ crossbeam-skiplist = "0.1"
 # Async stream utilities and combinators
 tokio-stream = { version = "0.1", features = ["sync", "net"] }
 
+# WebSocket gateway
+futures-util = "0.3"
+tokio-tungstenite = "0.20"
+
 # Error handling
 anyhow  = "1"
 thiserror = "1"

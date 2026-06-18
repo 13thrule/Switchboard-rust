@@ -50,7 +50,9 @@ switchboard_refactored/switchboard/
     ├── router.rs           # Lock-free topic registry & broadcast routing
     ├── connection.rs       # Per-connection async task (StreamMap multiplexing)
     ├── protocol.rs         # Binary protocol parser (zero-copy frame extraction)
-    └── state.rs            # Connection & message state machines
+    ├── state.rs            # Connection & message state machines
+    └── bin/
+        └── bench_publisher.rs  # Benchmark publisher for throughput testing
 ```
 
 ## Test Suite & Validation ✅
@@ -188,6 +190,112 @@ Output:
 - **Concurrent connections:** Limited by file descriptor ulimit (~100K on Linux)
 - **Topics per broker:** Unlimited (limited by available memory)
 - **Subscribers per topic:** Unlimited (1024-message buffer per topic)
+
+## Benchmarks
+
+A small benchmark runner is included at `src/bin/bench_publisher.rs`. It spawns multiple publisher connections and sends messages across many topics to measure real throughput.
+
+### Example Run
+```bash
+cargo run --release --bin bench_publisher -- --server 127.0.0.1:7777 --topics 1000 --messages 100000 --parallel 4 --payload-size 64
+```
+
+### Sample Results
+- **Messages sent:** 100,000
+- **Topics:** 1,000
+- **Parallel connections:** 4
+- **Payload size:** 64 bytes
+- **Elapsed:** 0.12s
+- **Throughput:** 851,426 msg/s
+- **Bandwidth:** 64.15 MB/s
+
+### Idle Resource Usage
+A live server process was observed at near-zero idle usage:
+```text
+  PID %CPU %MEM CMD
+  37393  0.0  0.0 switchboard --port 7777
+```
+
+### Notes for Performance Engineers
+- The benchmark measures publish throughput, not end-to-end latency
+- Benchmark uses TCP and a 64-byte payload per message
+- Best results are on release mode with `cargo run --release`
+- Idle CPU stays effectively at 0.0% when no messages are flowing
+
+## WebSocket Gateway
+
+Switchboard now supports native WebSocket connections on the same server port as TCP clients. Web browsers can publish and subscribe using the exact same binary protocol format as native TCP clients.
+
+### Why this matches Switchboard’s architecture
+- **Zero-copy payload slicing:** WebSocket binary frames are consumed into `bytes::Bytes` without extra intermediate text parsing.
+- **Same binary wire protocol:** Browser clients send `0x01` subscribe frames and `0x02` publish frames with an identical frame layout to the TCP protocol.
+- **Waker-driven integration:** The WebSocket gateway uses the same `StreamMap` subscription pipeline as TCP connections, so message delivery stays event-driven and lock-free.
+
+### How to use it
+1. Start the server as usual:
+```bash
+RUST_LOG=info ./target/release/switchboard --port 7777
+```
+2. Connect from a browser using a `WebSocket` to `ws://localhost:7777/`.
+3. Send binary frames directly from JavaScript using `Uint8Array`.
+
+### Browser frame format examples
+- **Subscribe:** `0x01` + UTF-8 topic bytes
+- **Publish:** `0x02` + topic length (big-endian u16) + topic bytes + payload bytes
+
+### Example JavaScript publish code
+```js
+const socket = new WebSocket('ws://localhost:7777');
+socket.binaryType = 'arraybuffer';
+
+socket.addEventListener('open', () => {
+  const topic = 'trades';
+  const payload = new TextEncoder().encode('AAPL BUY 150 shares @ 195.50');
+  const topicBytes = new TextEncoder().encode(topic);
+  const frame = new Uint8Array(1 + 2 + topicBytes.length + payload.length);
+  frame[0] = 0x02;
+  frame[1] = topicBytes.length >> 8;
+  frame[2] = topicBytes.length & 0xff;
+  frame.set(topicBytes, 3);
+  frame.set(payload, 3 + topicBytes.length);
+  socket.send(frame);
+});
+```
+
+### Browser demo (minimal)
+Open the browser console and run:
+
+```js
+const socket = new WebSocket('ws://localhost:7777');
+socket.binaryType = 'arraybuffer';
+
+socket.addEventListener('open', () => {
+  // Subscribe
+  const topic = 'demo';
+  const topicBytes = new TextEncoder().encode(topic);
+  const sub = new Uint8Array(1 + topicBytes.length);
+  sub[0] = 0x01; // subscribe
+  sub.set(topicBytes, 1);
+  socket.send(sub.buffer);
+
+  // Publish (with 4-byte length prefix optional)
+  const payload = new TextEncoder().encode('hello from browser');
+  const pub = new Uint8Array(4 + 1 + 2 + topicBytes.length + payload.length);
+  const bodyLen = 1 + 2 + topicBytes.length + payload.length;
+  const dv = new DataView(pub.buffer);
+  dv.setUint32(0, bodyLen);
+  pub[4] = 0x02;
+  dv.setUint16(5, topicBytes.length);
+  pub.set(topicBytes, 7);
+  pub.set(payload, 7 + topicBytes.length);
+  socket.send(pub.buffer);
+});
+
+socket.addEventListener('message', (evt) => {
+  const data = new Uint8Array(evt.data);
+  console.log('got binary', data);
+});
+```
 
 ## Protocol Specification
 

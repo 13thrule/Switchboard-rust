@@ -1,9 +1,6 @@
 //! Switchboard — zero-copy async message router.
 
-mod connection;
-mod protocol;
-mod router;
-mod state;
+use switchboard::{connection::Connection, router::Router};
 
 use std::net::SocketAddr;
 
@@ -12,8 +9,7 @@ use tokio::net::TcpListener;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use connection::Connection;
-use router::Router;
+// `Connection` and `Router` are re-exported from the library crate
 
 #[derive(Debug)]
 struct Config {
@@ -105,7 +101,7 @@ async fn run_server(bind: SocketAddr) -> Result<()> {
 
 async fn run_client(server: SocketAddr, mode: ClientMode) -> Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use protocol::{encode_publish, encode_subscribe, Frame};
+    use switchboard::protocol::{encode_publish, encode_subscribe, Frame};
     use bytes::BytesMut;
 
     let mut stream = tokio::net::TcpStream::connect(server)

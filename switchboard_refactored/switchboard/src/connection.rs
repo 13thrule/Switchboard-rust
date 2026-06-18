@@ -16,6 +16,7 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt, StreamMap};
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    connection_ws::run_websocket_connection,
     protocol::Frame,
     router::{Router, RouterMessage},
     state::ConnectionState,
@@ -42,11 +43,19 @@ impl Connection {
     pub async fn run(self) -> Result<()> {
         info!(peer = %self.peer, "connection accepted");
 
-        let (read_half, write_half) = self.stream.into_split();
-        let (sub_tx, sub_rx) = mpsc::channel::<NewSubscription>(64);
+        let mut peek_buf = [0u8; 4];
+        let mut stream = self.stream;
+        let peer = self.peer;
+        let router = self.router.clone();
 
-        let peer   = self.peer;
-        let router = self.router;
+        let n = stream.peek(&mut peek_buf).await.context("peeking connection")?;
+        if n >= 4 && &peek_buf == b"GET ".as_ref() {
+            info!(peer = %peer, "connection is WebSocket upgrade candidate");
+            return run_websocket_connection(stream, peer, router).await;
+        }
+
+        let (read_half, write_half) = stream.into_split();
+        let (sub_tx, sub_rx) = mpsc::channel::<NewSubscription>(64);
 
         let read_h  = tokio::spawn(read_task(read_half, peer, router, sub_tx));
         let write_h = tokio::spawn(write_task(write_half, peer, sub_rx));

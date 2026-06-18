@@ -34,6 +34,13 @@ pub enum Frame {
 
 impl Frame {
     pub fn parse(mut raw: Bytes) -> Result<Self, ProtocolError> {
+        if raw.len() >= 4 {
+            let length_prefix = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+            if length_prefix == raw.len() - 4 {
+                raw.advance(4);
+            }
+        }
+
         if raw.is_empty() {
             return Err(ProtocolError::EmptyFrame);
         }
@@ -125,6 +132,20 @@ mod tests {
         let msg = b"hello world";
         let encoded = encode_publish("telemetry", msg);
         let raw = make_bytes(encoded[4..].to_vec());
+        let frame = Frame::parse(raw).unwrap();
+        match frame {
+            Frame::Publish { topic, payload } => {
+                assert_eq!(&topic[..],   b"telemetry");
+                assert_eq!(&payload[..], b"hello world");
+            }
+            _ => panic!("expected Publish"),
+        }
+    }
+
+    #[test]
+    fn parse_prefixed_publish() {
+        let encoded = encode_publish("telemetry", b"hello world");
+        let raw = make_bytes(encoded);
         let frame = Frame::parse(raw).unwrap();
         match frame {
             Frame::Publish { topic, payload } => {

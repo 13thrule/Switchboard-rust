@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Switchboard WebSocket Demo</title>
+  <style>body{font-family:system-ui,Segoe UI,Roboto,Arial;margin:20px}#log{white-space:pre-wrap;background:#111;color:#d0ffd0;padding:10px;height:240px;overflow:auto;border-radius:6px}</style>
+</head>
+<body>
+  <h2>Switchboard WebSocket Demo</h2>
+  <p>Connects to <code>ws://localhost:7777</code> and demonstrates subscribe/publish.</p>
+
+  <div>
+    <label>Topic: <input id="topic" value="demo" /></label>
+    <button id="connect">Connect</button>
+    <button id="sub" disabled>Subscribe</button>
+    <button id="pub" disabled>Publish</button>
+    <input id="payload" value="hello from browser" style="width:320px" />
+  </div>
+  <h3>Logs</h3>
+  <div id="log"></div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    function log(...s){ logEl.textContent += s.join(' ') + '\n'; logEl.scrollTop = logEl.scrollHeight; }
+
+    let socket = null;
+    document.getElementById('connect').onclick = () => {
+      if(socket && socket.readyState === WebSocket.OPEN){ socket.close(); socket = null; document.getElementById('connect').textContent='Connect'; return; }
+      socket = new WebSocket('ws://localhost:7777');
+      socket.binaryType = 'arraybuffer';
+      socket.addEventListener('open', ()=>{ log('open'); document.getElementById('connect').textContent='Disconnect'; document.getElementById('sub').disabled=false; document.getElementById('pub').disabled=false; });
+      socket.addEventListener('message', evt=>{ const data=new Uint8Array(evt.data); log('recv:', Array.from(data)); try{ if(data.length>4 && data[4]===0x02){ const topicLen = (data[5]<<8)|data[6]; const topic = new TextDecoder().decode(data.slice(7,7+topicLen)); const payload = new TextDecoder().decode(data.slice(7+topicLen)); log(`[${topic}] ${payload}`); } }catch(e){ log('parse error',e); } });
+      socket.addEventListener('close', ()=>{ log('closed'); document.getElementById('connect').textContent='Connect'; document.getElementById('sub').disabled=true; document.getElementById('pub').disabled=true; });
+      socket.addEventListener('error', e=>{ log('error', e && e.message ? e.message : e); });
+    };
+
+    document.getElementById('sub').onclick = ()=>{
+      const topic = document.getElementById('topic').value;
+      const topicBytes = new TextEncoder().encode(topic);
+      const sub = new Uint8Array(1 + topicBytes.length);
+      sub[0] = 0x01; sub.set(topicBytes, 1);
+      socket.send(sub.buffer);
+      log('sent subscribe', topic);
+    };
+
+    document.getElementById('pub').onclick = ()=>{
+      const topic = document.getElementById('topic').value;
+      const payload = new TextEncoder().encode(document.getElementById('payload').value);
+      const topicBytes = new TextEncoder().encode(topic);
+      const bodyLen = 1 + 2 + topicBytes.length + payload.length;
+      const pub = new Uint8Array(4 + bodyLen);
+      const dv = new DataView(pub.buffer);
+      dv.setUint32(0, bodyLen);
+      pub[4] = 0x02;
+      dv.setUint16(5, topicBytes.length);
+      pub.set(topicBytes, 7);
+      pub.set(payload, 7 + topicBytes.length);
+      socket.send(pub.buffer);
+      log('sent publish', topic, payload.length+'B');
+    };
+  </script>
+</body>
+</html>
