@@ -1,5 +1,11 @@
 # Switchboard — Ultra-Low Latency Async Pub/Sub Message Broker
 
+[![CI](https://github.com/13thrule/Switchboard-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/13thrule/Switchboard-rust/actions)
+[![Docs](https://img.shields.io/badge/docs-rustdoc-blue.svg)](https://docs.rs)
+[![Crates.io](https://img.shields.io/crates/v/switchboard.svg)](https://crates.io)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+
 A **zero-copy, event-driven message broker** built in Rust for blazingly fast inter-system communication. Switchboard eliminates the two biggest bottlenecks in traditional message brokers: **wasteful memory copying** and **expensive polling loops**.
 
 ## The Core Concept
@@ -295,6 +301,26 @@ socket.addEventListener('message', (evt) => {
   const data = new Uint8Array(evt.data);
   console.log('got binary', data);
 });
+
+### Interactive demo page
+You can open a small interactive demo page that connects to a locally-running Switchboard server and provides Connect / Subscribe / Publish buttons.
+
+- Demo page: [demo/index.html](demo/index.html)
+
+Steps to use the demo:
+
+1. Start the server (from the workspace root):
+
+```bash
+cd switchboard_refactored/switchboard
+. "$HOME/.cargo/env"
+RUST_LOG=debug cargo run --bin switchboard -- --port 7777
+```
+
+2. Open the demo page in your browser (click the link above or open the file directly).
+3. On the page: click **Connect**, then **Subscribe** (default topic `demo`), then **Publish** — the published message should appear in the Logs box.
+
+If the demo can't connect, verify the server is listening on port 7777 with `lsof -i:7777 -Pn`, and check the server terminal for handshake logs.
 ```
 
 ## Protocol Specification
