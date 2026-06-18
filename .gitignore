@@ -2,6 +2,7 @@
 target/
 Cargo.lock
 !switchboard_refactored/switchboard/Cargo.lock
+node_modules/
 **/*.rs.bk
 
 # IDE
