@@ -1,6 +1,7 @@
 # Rust build artifacts
 target/
 Cargo.lock
+!switchboard_refactored/switchboard/Cargo.lock
 **/*.rs.bk
 
 # IDE
