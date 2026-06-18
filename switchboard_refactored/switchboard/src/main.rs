@@ -1,6 +1,7 @@
 //! Switchboard — zero-copy async message router.
 
 use switchboard::{connection::Connection, router::Router};
+use switchboard::metrics;
 
 use std::net::SocketAddr;
 
@@ -78,6 +79,10 @@ async fn run_server(bind: SocketAddr) -> Result<()> {
         .await
         .with_context(|| format!("binding to {}", bind))?;
 
+    // Start Prometheus metrics server on port 9090
+    let metrics_addr: SocketAddr = "0.0.0.0:9090".parse().unwrap();
+    metrics::serve_metrics(metrics_addr).await;
+
     let router = Router::new();
     info!(addr = %bind, "switchboard listening");
 
@@ -86,6 +91,9 @@ async fn run_server(bind: SocketAddr) -> Result<()> {
             .accept()
             .await
             .context("accepting TCP connection")?;
+
+        // metrics
+        metrics::CONNECTIONS.inc();
 
         stream.set_nodelay(true)?;
 

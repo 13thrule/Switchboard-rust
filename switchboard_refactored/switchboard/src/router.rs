@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
 use crate::state::MessageState;
+use crate::metrics;
 
 const CHANNEL_CAPACITY: usize = 1024;
 
@@ -70,6 +71,11 @@ impl Router {
                 return PublishResult { state: MessageState::Routed, subscribers: 0 };
             }
         };
+
+        let size = payload.len() as f64;
+        // update metrics
+        metrics::PUBLISHES.inc();
+        metrics::LAST_PUBLISH_SIZE.set(size);
 
         let msg = RouterMessage { payload, state: MessageState::Routed };
 
