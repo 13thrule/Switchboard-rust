@@ -27,7 +27,7 @@ async fn rejects_oversized_prefixed_frame() {
 
     // Send a 4-byte length header that exceeds MAX_FRAME_BYTES (16MiB)
     let oversized: u32 = 16 * 1024 * 1024 + 1;
-    let mut hdr = oversized.to_be_bytes();
+    let hdr = oversized.to_be_bytes();
     stream.write_all(&hdr).await.expect("write header");
 
     // Give server a moment to process and close the connection
@@ -41,5 +41,5 @@ async fn rejects_oversized_prefixed_frame() {
         Err(e) => panic!("read error: {}", e),
     }
 
-    let _ = server.abort();
+    server.abort();
 }
