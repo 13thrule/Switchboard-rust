@@ -1,0 +1,35 @@
+[package]
+name        = "switchboard"
+version     = "0.1.0"
+edition     = "2021"
+description = "Zero-copy async message router"
+
+[[bin]]
+name = "switchboard"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Zero-copy byte buffers
+bytes = "1"
+
+# Lock-free skip list for topic registry
+crossbeam-skiplist = "0.1"
+
+# Async stream utilities and combinators
+tokio-stream = { version = "0.1", features = ["sync", "net"] }
+
+# Error handling
+anyhow  = "1"
+thiserror = "1"
+
+# Logging
+tracing            = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 3
+lto       = "thin"
+codegen-units = 1
