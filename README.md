@@ -20,6 +20,32 @@ When a message arrives, they make a **physical photocopy** for every single subs
 ### How Switchboard Works (The Solution)
 Instead of photocopies, Switchboard uses a **magic glass table**. When a message arrives, everyone gets a **direct view of the exact same original data**—no copying. And instead of constantly checking for mail, the broker **sleeps completely until a message arrives** (waker-driven, not polling).
 
+```
+  NATIVE TCP CLIENTS                   BROWSER WEB INTERFACE
+    ┌──────────────────────┐               ┌──────────────────────┐
+    │  [Sub]     │ [Pub]   │               │   [Sub]    │ [Pub]   │
+    └───┬────────┴────▲────┘               └─────┬──────┴────▲────┘
+   │ Raw TCP     │ Raw TCP                  │ Web       │ Web
+   │ Frames      │ Frames                   │ Socket    │ Socket
+   ▼             │                          ▼           │
+ ┌──────────────┐     │                   ┌──────────────┐   │
+ │  read_task   │     │                   │  ws_read     │   │
+ └──────┬───────┘     │                   └──────┬───────┘   │
+   │             │                          │           │
+   │ .publish()  │                          │ .publish()│
+   ▼             │                          ▼           │
+┌─────────────────────────┐               ┌─────────────────────────┐
+│  Router (SkipMap Matrix)│               │  Router (SkipMap Matrix)│
+└──────────────┬──────────┘               └──────────────┬──────────┘
+     │                                         │
+     │ broadcast::Receiver                     │ broadcast::Receiver
+     ▼                                         ▼
+ ┌──────────────┐     │                   ┌──────────────┐   │
+ │  write_task  ├─────┘                   │  ws_write    ├───┘
+ └──────────────┘                         └──────────────┘
+   (StreamMap Multiplexing)                 (StreamMap Multiplexing)
+```
+
 ## Key Architecture Features
 
 ### 1. **Zero-Copy Pipeline** 🔄
@@ -283,17 +309,14 @@ socket.addEventListener('open', () => {
   sub[0] = 0x01; // subscribe
   sub.set(topicBytes, 1);
   socket.send(sub.buffer);
-
-  // Publish (with 4-byte length prefix optional)
+  // Publish (WebSocket-friendly, no 4-byte length prefix)
   const payload = new TextEncoder().encode('hello from browser');
-  const pub = new Uint8Array(4 + 1 + 2 + topicBytes.length + payload.length);
-  const bodyLen = 1 + 2 + topicBytes.length + payload.length;
-  const dv = new DataView(pub.buffer);
-  dv.setUint32(0, bodyLen);
-  pub[4] = 0x02;
-  dv.setUint16(5, topicBytes.length);
-  pub.set(topicBytes, 7);
-  pub.set(payload, 7 + topicBytes.length);
+  const pub = new Uint8Array(1 + 2 + topicBytes.length + payload.length);
+  pub[0] = 0x02;
+  const dv2 = new DataView(pub.buffer);
+  dv2.setUint16(1, topicBytes.length);
+  pub.set(topicBytes, 3);
+  pub.set(payload, 3 + topicBytes.length);
   socket.send(pub.buffer);
 });
 
