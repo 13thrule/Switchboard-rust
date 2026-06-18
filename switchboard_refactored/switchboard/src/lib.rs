@@ -3,6 +3,7 @@ pub mod connection_ws;
 pub mod protocol;
 pub mod router;
 pub mod state;
+pub mod metrics;
 
 // Re-export commonly used types at crate root
 pub use connection::Connection;
