@@ -29,6 +29,7 @@ jobs:
 
       - name: Run cargo test
         run: |
+          cd switchboard_refactored/switchboard
           cargo test --workspace --all-features --locked --verbose
 
       - name: Build release binary
