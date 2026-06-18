@@ -55,5 +55,5 @@ async fn masked_websocket_roundtrip() {
         other => panic!("expected binary message, got {:?}", other),
     }
 
-    let _ = server.abort();
+    server.abort();
 }

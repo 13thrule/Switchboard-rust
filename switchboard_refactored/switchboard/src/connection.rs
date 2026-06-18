@@ -49,7 +49,7 @@ impl Connection {
         let router = self.router.clone();
 
         let n = stream.peek(&mut peek_buf).await.context("peeking connection")?;
-        if n >= 4 && &peek_buf == b"GET ".as_ref() {
+        if n >= 4 && peek_buf == *b"GET " {
             info!(peer = %peer, "connection is WebSocket upgrade candidate");
             return run_websocket_connection(stream, peer, router).await;
         }

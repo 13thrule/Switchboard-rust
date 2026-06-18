@@ -62,5 +62,5 @@ async fn websocket_gateway_roundtrip() {
     }
 
     // Clean up server
-    let _ = server.abort();
+    server.abort();
 }
