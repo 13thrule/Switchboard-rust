@@ -8,6 +8,21 @@
 
 A **zero-copy, event-driven message broker** built in Rust for blazingly fast inter-system communication. Switchboard eliminates the two biggest bottlenecks in traditional message brokers: **wasteful memory copying** and **expensive polling loops**.
 
+> Try Switchboard in 3 commands — start the server, subscribe, then publish. Star the repo if you find it useful ⭐
+
+**Quickstart (Try it now)**
+```bash
+# start server (background)
+cd switchboard_refactored/switchboard
+cargo run --release -- --port 7777 &
+
+# subscribe to topic `demo`
+cargo run --release -- --client subscribe --topic demo
+
+# publish a message to `demo` (new terminal)
+cargo run --release -- --client publish --topic demo --message "hello from quickstart"
+```
+
 ## The Core Concept
 
 Imagine a massive corporate headquarters where thousands of departments need instant updates:
@@ -329,6 +344,8 @@ socket.addEventListener('message', (evt) => {
 You can open a small interactive demo page that connects to a locally-running Switchboard server and provides Connect / Subscribe / Publish buttons.
 
 - Demo page: [demo/index.html](demo/index.html)
+
+![Demo screenshot](demo/demo-screenshot.svg)
 
 Steps to use the demo:
 
