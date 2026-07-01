@@ -35,12 +35,12 @@ ws.on('open', ()=>{
 
 ws.on('message', (data)=>{
   const buf = Buffer.from(data);
-  // Expecting publish frame: type 0x02 at position 0
-  if(buf[0]===0x02){
-    // read topic len
-    const tlen = buf.readUInt16BE(1);
-    const t = buf.slice(3,3+tlen).toString('utf8');
-    const p = buf.slice(3+tlen).toString('utf8');
+  // Broker may send either raw frame [type..] or length-prefixed frame [len(4)][type..].
+  const offset = (buf.length >= 5 && buf[4] === 0x02) ? 4 : 0;
+  if(buf[offset]===0x02){
+    const tlen = buf.readUInt16BE(offset + 1);
+    const t = buf.slice(offset + 3, offset + 3 + tlen).toString('utf8');
+    const p = buf.slice(offset + 3 + tlen).toString('utf8');
     if(t===topic && p===payload){
       clearTimeout(to);
       console.log('ok');
