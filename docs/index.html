@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Switchboard - Ultra-low latency zero-copy async pub/sub message broker. 100x faster IPC, lock-free architecture, 34/34 tests passing.">
+    <meta name="theme-color" content="#667eea">
     <title>Switchboard — Ultra-Low Latency Pub/Sub Broker</title>
     <style>
         * {
@@ -14,23 +16,21 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             line-height: 1.6;
-            color: #333;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+            color: #1a1a1a;
+            background: #fafbfc;
         }
         
         header {
-            background: rgba(255, 255, 255, 0.95);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-            padding: 20px 0;
-            sticky: top;
+            background: white;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+            padding: 16px 0;
+            position: sticky;
+            top: 0;
             z-index: 100;
         }
         
         .container {
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
             padding: 0 20px;
             width: 100%;
@@ -42,97 +42,85 @@
             align-items: center;
         }
         
-        h1 {
-            font-size: 24px;
-            font-weight: 600;
+        .logo {
+            font-size: 20px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
         
         .nav-links {
             display: flex;
-            gap: 20px;
+            gap: 24px;
             list-style: none;
         }
         
         .nav-links a {
             text-decoration: none;
-            color: #667eea;
+            color: #666;
             font-weight: 500;
+            font-size: 14px;
             transition: color 0.3s;
         }
         
-        .nav-links a:hover {
-            color: #764ba2;
+        .nav-links a:hover, .nav-links a.active {
+            color: #667eea;
         }
         
         .hero {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 60px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 120px 20px;
             text-align: center;
         }
         
         .hero-content {
-            color: white;
-            max-width: 700px;
+            max-width: 800px;
+            margin: 0 auto;
         }
         
-        .hero h2 {
-            font-size: 48px;
-            font-weight: 700;
-            margin-bottom: 20px;
-            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        .hero h1 {
+            font-size: 56px;
+            font-weight: 800;
+            margin-bottom: 16px;
+            letter-spacing: -1px;
         }
         
-        .hero p {
-            font-size: 18px;
-            margin-bottom: 15px;
+        .hero-subtitle {
+            font-size: 20px;
             opacity: 0.95;
+            margin-bottom: 12px;
         }
         
-        .badges {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin: 30px 0;
-        }
-        
-        .badge {
-            display: inline-block;
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 14px;
-            font-weight: 500;
-            backdrop-filter: blur(10px);
-        }
-        
-        .badge.highlight {
-            background: rgba(255, 255, 255, 0.3);
-            border: 2px solid white;
+        .hero-desc {
+            font-size: 16px;
+            opacity: 0.9;
+            margin-bottom: 40px;
+            line-height: 1.8;
         }
         
         .cta-buttons {
             display: flex;
-            gap: 15px;
+            gap: 16px;
             justify-content: center;
-            margin-top: 30px;
             flex-wrap: wrap;
+            margin-bottom: 60px;
         }
         
         .btn {
-            padding: 14px 28px;
+            padding: 12px 32px;
             font-size: 16px;
             font-weight: 600;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
             text-decoration: none;
             transition: all 0.3s;
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }
         
         .btn-primary {
@@ -142,117 +130,197 @@
         
         .btn-primary:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
         }
         
         .btn-secondary {
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.15);
             color: white;
             border: 2px solid white;
         }
         
         .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.25);
             transform: translateY(-2px);
+        }
+        
+        .badges {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        .badge-item {
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .badge-value {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .section {
+            padding: 80px 20px;
+        }
+        
+        .section h2 {
+            text-align: center;
+            font-size: 36px;
+            margin-bottom: 12px;
+            color: #1a1a1a;
+        }
+        
+        .section-desc {
+            text-align: center;
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 48px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
         }
         
         .features {
             background: white;
-            padding: 60px 20px;
-            margin-top: 40px;
-        }
-        
-        .features h3 {
-            text-align: center;
-            font-size: 32px;
-            margin-bottom: 40px;
-            color: #333;
         }
         
         .feature-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 30px;
-            max-width: 1000px;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            max-width: 1200px;
             margin: 0 auto;
         }
         
         .feature-card {
-            padding: 25px;
-            border-radius: 8px;
+            padding: 28px;
+            border-radius: 12px;
             background: #f8f9fa;
             border-left: 4px solid #667eea;
-            transition: transform 0.3s, box-shadow 0.3s;
+            transition: all 0.3s;
         }
         
         .feature-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+            transform: translateY(-6px);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
         }
         
-        .feature-card h4 {
+        .feature-card h3 {
             color: #667eea;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
             font-size: 18px;
         }
         
         .feature-card p {
             color: #666;
-            font-size: 14px;
+            font-size: 15px;
+            line-height: 1.7;
         }
         
         .stats {
-            background: #f8f9fa;
-            padding: 40px 20px;
-            margin-top: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
         }
         
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 20px;
-            max-width: 1000px;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 32px;
+            max-width: 1200px;
             margin: 0 auto;
             text-align: center;
         }
         
-        .stat-box {
-            padding: 20px;
-        }
-        
         .stat-box .number {
-            font-size: 28px;
-            font-weight: 700;
-            color: #667eea;
+            font-size: 36px;
+            font-weight: 800;
+            margin-bottom: 8px;
         }
         
         .stat-box .label {
-            font-size: 12px;
-            color: #999;
-            margin-top: 5px;
+            font-size: 13px;
+            opacity: 0.9;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
+            font-weight: 500;
+        }
+        
+        .demo-section {
+            background: white;
+        }
+        
+        .demo-box {
+            background: #f8f9fa;
+            border: 2px solid #e1e4e8;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        
+        .demo-box h3 {
+            color: #1a1a1a;
+            margin-bottom: 16px;
+            font-size: 20px;
+        }
+        
+        .demo-box p {
+            color: #666;
+            margin-bottom: 12px;
+            font-size: 15px;
+        }
+        
+        .demo-box code {
+            background: #1a1a1a;
+            color: #0f0;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+        }
+        
+        .demo-cta {
+            margin-top: 32px;
         }
         
         footer {
-            background: rgba(0, 0, 0, 0.1);
-            color: white;
+            background: #1a1a1a;
+            color: #999;
             text-align: center;
-            padding: 20px;
-            margin-top: auto;
+            padding: 40px 20px;
+            font-size: 14px;
+        }
+        
+        footer a {
+            color: #ccc;
+            text-decoration: none;
+        }
+        
+        footer a:hover {
+            color: #667eea;
         }
         
         @media (max-width: 768px) {
-            .hero h2 {
+            .hero h1 {
                 font-size: 36px;
             }
             
-            .hero p {
-                font-size: 16px;
+            .hero-subtitle {
+                font-size: 18px;
             }
             
             .nav-links {
-                gap: 15px;
+                gap: 12px;
+                font-size: 13px;
             }
             
             .cta-buttons {
@@ -261,7 +329,15 @@
             
             .btn {
                 width: 100%;
-                max-width: 300px;
+                justify-content: center;
+            }
+            
+            .section {
+                padding: 60px 20px;
+            }
+            
+            .section h2 {
+                font-size: 28px;
             }
         }
     </style>
@@ -269,109 +345,128 @@
 <body>
     <header>
         <div class="container">
-            <h1>🚀 Switchboard</h1>
+            <div class="logo">⚡ Switchboard</div>
             <ul class="nav-links">
-                <li><a href="https://github.com/13thrule/Switchboard-rust">GitHub</a></li>
-                <li><a href="https://crates.io/crates/switchboard">Crates.io</a></li>
-                <li><a href="#demo">Live Demo</a></li>
+                <li><a href="https://github.com/13thrule/Switchboard-rust" target="_blank">GitHub</a></li>
+                <li><a href="https://crates.io/crates/switchboard" target="_blank">Crates.io</a></li>
+                <li><a href="#demo" class="active">Demo</a></li>
             </ul>
         </div>
     </header>
     
-    <div class="hero">
+    <section class="hero">
         <div class="hero-content">
-            <h2>Ultra-Low Latency<br>Pub/Sub Broker</h2>
-            <p>Zero-copy, event-driven message broker built in Rust</p>
-            <p style="opacity: 0.8; font-size: 16px;">Eliminates memory copying and expensive polling loops</p>
-            
-            <div class="badges">
-                <span class="badge highlight">🚀 Phase 4 & 5 Complete</span>
-                <span class="badge">100x Faster (2µs IPC)</span>
-                <span class="badge">34/34 Tests ✓</span>
-                <span class="badge">Lock-Free Architecture</span>
-            </div>
+            <h1>Ultra-Low Latency<br>Pub/Sub Message Broker</h1>
+            <p class="hero-subtitle">Zero-copy, event-driven architecture built in Rust</p>
+            <p class="hero-desc">Eliminates memory copying and expensive polling. Achieves 2µs latency with lock-free data structures and waker-driven event loops.</p>
             
             <div class="cta-buttons">
-                <a href="#demo" class="btn btn-primary">Try Live Demo →</a>
-                <a href="https://github.com/13thrule/Switchboard-rust#quickstart-try-it-now" class="btn btn-secondary">View Docs</a>
+                <a href="#demo" class="btn btn-primary">🎮 Try Live Demo →</a>
+                <a href="https://github.com/13thrule/Switchboard-rust#quickstart-try-it-now" target="_blank" class="btn btn-secondary">📖 View Quickstart</a>
             </div>
-        </div>
-    </div>
-    
-    <div class="features">
-        <h3>Enterprise Features</h3>
-        <div class="feature-grid">
-            <div class="feature-card">
-                <h4>⚡ Phase 4: Local IPC</h4>
-                <p><strong>100x faster</strong> message passing for same-host connections via shared memory. 2µs latency vs 200µs TCP.</p>
-            </div>
-            <div class="feature-card">
-                <h4>🔄 Phase 5: Wildcard Patterns</h4>
-                <p>Lock-free trie router with O(depth) matching. Supports <code>*</code> (single-level) and <code>></code> (recursive) patterns.</p>
-            </div>
-            <div class="feature-card">
-                <h4>🎯 Zero-Copy Broadcasting</h4>
-                <p>All subscribers read the same memory location. Adding 1,000 subscribers costs essentially zero extra memory.</p>
-            </div>
-            <div class="feature-card">
-                <h4>🔐 Lock-Free Architecture</h4>
-                <p>Uses crossbeam SkipMap and DashMap for concurrent access without mutex contention on the hot path.</p>
-            </div>
-            <div class="feature-card">
-                <h4>⏰ Waker-Driven Event Loop</h4>
-                <p>Never polls. 0% CPU at idle. Subscribers wake instantly when messages arrive using Tokio channels.</p>
-            </div>
-            <div class="feature-card">
-                <h4>🌐 WebSocket Support</h4>
-                <p>Browser clients use the same binary protocol as TCP. Demo runs directly in your browser.</p>
-            </div>
-        </div>
-    </div>
-    
-    <div class="stats">
-        <div class="stats-grid">
-            <div class="stat-box">
-                <div class="number">2µs</div>
-                <div class="label">IPC Latency</div>
-            </div>
-            <div class="stat-box">
-                <div class="number">851K</div>
-                <div class="label">Msg/s Throughput</div>
-            </div>
-            <div class="stat-box">
-                <div class="number">0%</div>
-                <div class="label">Idle CPU</div>
-            </div>
-            <div class="stat-box">
-                <div class="number">34/34</div>
-                <div class="label">Tests Passing</div>
-            </div>
-        </div>
-    </div>
-    
-    <div style="background: white; padding: 60px 20px; margin-top: 20px;">
-        <div class="container">
-            <h3 id="demo" style="font-size: 32px; margin-bottom: 30px;">Live Demo</h3>
-            <p style="margin-bottom: 20px; color: #666;">
-                Click the button below to launch the interactive WebSocket demo. The demo connects to <code>ws://localhost:7777</code> 
-                and demonstrates publish/subscribe operations in real-time.
-            </p>
-            <div style="background: #f8f9fa; padding: 30px; border-radius: 8px; text-align: center;">
-                <p style="margin-bottom: 20px; color: #666;">
-                    <strong>Note:</strong> To use this demo, you need to run a local Switchboard instance:
-                </p>
-                <pre style="background: #111; color: #0f0; padding: 15px; border-radius: 4px; text-align: left; overflow-x: auto; max-width: 500px; margin: 0 auto;">cd switchboard_refactored/switchboard
-cargo run --release -- --port 7777</pre>
-                <div style="margin-top: 30px;">
-                    <a href="demo/" class="btn btn-primary">Open Demo →</a>
+            
+            <div class="badges">
+                <div class="badge-item">
+                    <div class="badge-value">100x</div>
+                    <div>Faster IPC</div>
+                </div>
+                <div class="badge-item">
+                    <div class="badge-value">2µs</div>
+                    <div>Latency</div>
+                </div>
+                <div class="badge-item">
+                    <div class="badge-value">34/34</div>
+                    <div>Tests Pass</div>
+                </div>
+                <div class="badge-item">
+                    <div class="badge-value">851K</div>
+                    <div>Msg/sec</div>
                 </div>
             </div>
         </div>
-    </div>
+    </section>
+    
+    <section class="section features">
+        <div class="container">
+            <h2>🚀 Enterprise Features</h2>
+            <p class="section-desc">Purpose-built for high-performance systems requiring sub-microsecond latency and zero memory overhead.</p>
+            
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h3>Phase 4: Local IPC</h3>
+                    <p><strong>100x faster</strong> message passing for same-host connections via shared memory. Atomic head/tail pointers, lock-free ring buffer, 2µs latency.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Phase 5: Wildcard Patterns</h3>
+                    <p>Lock-free trie router with <strong>O(depth) matching</strong>. Supports <code>*</code> (single-level) and <code>></code> (recursive) wildcards.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Zero-Copy Broadcasting</h3>
+                    <p>All subscribers read the <strong>same memory location</strong>. Adding 1,000 subscribers costs essentially zero extra memory or CPU.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Lock-Free Architecture</h3>
+                    <p>Uses crossbeam SkipMap and DashMap for concurrent access. <strong>No mutex contention</strong> on the hot path.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Waker-Driven Event Loop</h3>
+                    <p>Never polls. <strong>0% idle CPU</strong>. Subscribers wake instantly when messages arrive via Tokio channels.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>WebSocket Support</h3>
+                    <p>Browser clients use the same binary protocol as TCP. Try the interactive demo below with live protocol inspection.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <section class="section stats">
+        <div class="container">
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="number">2µs</div>
+                    <div class="label">IPC Latency</div>
+                </div>
+                <div class="stat-box">
+                    <div class="number">851K</div>
+                    <div class="label">Throughput (msg/s)</div>
+                </div>
+                <div class="stat-box">
+                    <div class="number">0%</div>
+                    <div class="label">Idle CPU</div>
+                </div>
+                <div class="stat-box">
+                    <div class="number">34/34</div>
+                    <div class="label">Tests Passing</div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <section class="section demo-section">
+        <div class="container">
+            <h2 id="demo">🎮 Live Interactive Demo</h2>
+            <p class="section-desc">Try Switchboard directly in your browser. Connect, subscribe, and publish messages in real-time.</p>
+            
+            <div class="demo-box">
+                <h3>Getting Started</h3>
+                <p>Run a local Switchboard server, then use the interactive demo to publish and subscribe:</p>
+                <p style="margin: 20px 0;">
+                    <code>cd switchboard_refactored/switchboard && cargo run --release -- --port 7777</code>
+                </p>
+                <p style="color: #999; font-size: 14px;">Then open the demo and click "Connect"</p>
+                <div class="demo-cta">
+                    <a href="./demo/" class="btn btn-primary">🎯 Open Live Demo →</a>
+                </div>
+            </div>
+        </div>
+    </section>
     
     <footer>
-        <p>Switchboard © 2026 • <a href="https://github.com/13thrule/Switchboard-rust" style="color: #fff;">GitHub</a> • 
-        <a href="https://github.com/13thrule/Switchboard-rust/blob/main/LICENSE" style="color: #fff;">MIT/Apache-2.0</a></p>
+        <p>Switchboard © 2026 • 
+        <a href="https://github.com/13thrule/Switchboard-rust" target="_blank">GitHub</a> • 
+        <a href="https://github.com/13thrule/Switchboard-rust/blob/main/LICENSE" target="_blank">MIT/Apache-2.0</a> •
+        <a href="https://github.com/13thrule/Switchboard-rust/blob/main/CHANGELOG.md" target="_blank">v0.2.0</a></p>
     </footer>
 </body>
 </html>

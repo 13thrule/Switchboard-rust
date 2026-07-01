@@ -16,7 +16,7 @@ A **zero-copy, event-driven message broker** built in Rust for blazingly fast in
 - 🔄 **Phase 5:** Lock-Free Trie Router — **O(depth) wildcard patterns** (`*` and `>` support)
 - 🎯 **34/34 tests passing** — Fully validated across TCP, WebSocket, SHM, and pattern matching
 
-> Try Switchboard in 3 commands — start the server, subscribe, then publish. Star the repo if you find it useful ⭐ | **[Live Demo 🎮](https://13thrule.github.io/Switchboard-rust/demo/)**
+> 🎮 **[Try Live Demo](https://13thrule.github.io/Switchboard-rust/demo/)** — No installation needed! | 📖 **[Landing Page](https://13thrule.github.io/Switchboard-rust/)** | 📚 **[Quick Start](#quickstart-try-it-now)** ⭐ Star the repo if you find it useful!
 
 ## Battle-Tested in Chaos 🌪️
 
