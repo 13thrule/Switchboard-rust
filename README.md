@@ -443,6 +443,86 @@ A live server process was observed at near-zero idle usage:
 2. Integrate Phase 7 with Phase 4/5 (no conflicts)
 3. Proceed to Phase 6 once Phase 7 is deployed
 
+## Companion Modules (Now Available!)
+
+### Phase 8a: Dataflow Graph Engine (`switchboard-flow/`)
+**Status:** ✅ **PRODUCTION READY** — 6/6 tests passing, example working
+
+A zero-copy dataflow execution engine that lets you compose processing pipelines without manual subscribe/publish wiring.
+
+**Key Features:**
+- **Node abstraction:** Async trait `process(input_port, Bytes) -> Vec<(PortId, Bytes)>`
+- **Graph composition:** Describe topology once, validate at build time (no typos at runtime)
+- **Event-driven execution:** Uses `tokio_stream::StreamMap` (same pattern as your connection handler)
+- **Zero-copy propagation:** Messages flow through pipeline as Bytes references
+- **Fan-in/out support:** Multi-input nodes, broadcast patterns fully supported
+
+**Example:**
+```
+topic "raw" → [Uppercase] → topic "shouted" → [Exclaim] → topic "final"
+```
+
+**Repository Structure:**
+```
+switchboard-flow/
+  src/
+    ids.rs       # NodeId, PortId
+    node.rs      # Node trait definition
+    graph.rs     # Graph builder with compile-time validation
+    executor.rs  # GraphExecutor — event-driven task spawning
+  examples/
+    uppercase_pipeline.rs  # Runnable 2-node pipeline
+  tests/
+    executor.rs  # 6 comprehensive integration tests
+```
+
+**Get Started:**
+```bash
+cd switchboard-flow
+cargo test                          # All 6 tests pass
+cargo run --example uppercase_pipeline   # Outputs: "HELLO SWITCHBOARD!"
+```
+
+**Next Steps:** Fan-in strategies (Join, Priority modes) and YAML graph loading.
+
+### Phase 8b: LLM Runtime Integration (`switchboard-llm-fabric/`)
+**Status:** 🔵 Early Design Phase — Specification + reference implementations
+
+Complete integration layer for connecting LLM inference runtimes (vLLM, llama.cpp, TorchServe) to Switchboard.
+
+**What's Included:**
+- **01-SPEC.md (161 lines):** Binary protocol spec for 7-topic LLM inference pipeline
+  - `prompt.in` — inbound requests from clients
+  - `tokens.out` — streamed token output
+  - `model.logits` / `model.next_token` — optional debug topics
+  - `stream.text` — detokenized output
+  - `kv.update` — distributed KV cache coordination
+  - `metrics` — operational telemetry
+
+- **02-switchboard_adapter.rs (321 lines):** Rust adapter reference implementation
+  - Frame encoding/decoding for all 7 topics
+  - Backpressure handling for 1024-msg ring buffer
+  - Async interface matching Switchboard Router
+
+- **03-switchboard_client.py (199 lines):** Python client reference
+  - WebSocket-based async client
+  - Streaming token decoding
+  - Request submission & response handling
+
+**Integration Points:**
+- **vLLM:** Hook `LLMEngine` to publish tokens to Switchboard topics
+- **llama.cpp:** FFI wrapper calling Rust adapter in the decode loop
+- **TorchServe:** Add Switchboard transport alongside HTTP/gRPC
+
+**Get Started:**
+```bash
+cat switchboard-llm-fabric/01-SPEC.md        # Understand the protocol
+# Study the Rust adapter
+cat switchboard-llm-fabric/02-switchboard_adapter.rs
+```
+
+**Next Steps:** Validate against real LLM runtime (start with llama.cpp), implement error handling, benchmark latency.
+
 ## WebSocket Gateway
 
 Switchboard now supports native WebSocket connections on the same server port as TCP clients. Web browsers can publish and subscribe using the exact same binary protocol format as native TCP clients.

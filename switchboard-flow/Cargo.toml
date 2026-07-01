@@ -1,0 +1,24 @@
+[package]
+name        = "switchboard-flow"
+version     = "0.1.0"
+edition     = "2021"
+description = "Dataflow graph engine built on top of Switchboard's zero-copy pub/sub router"
+
+[dependencies]
+switchboard = { path = "../switchboard_refactored/switchboard" }
+
+tokio       = { version = "1", features = ["full"] }
+bytes       = "1"
+async-trait = "0.1"
+anyhow      = "1"
+thiserror   = "1"
+tracing     = "0.1"
+
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[example]]
+name = "uppercase_pipeline"
+path = "examples/uppercase_pipeline.rs"
