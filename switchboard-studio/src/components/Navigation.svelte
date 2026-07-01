@@ -1,12 +1,18 @@
 <script>
-  import { modelsStore } from '../stores';
+  import { modelsStore, setActiveModel } from '../stores';
 
   export let mode = 'engineer';
+  export let activeTab = 'chat';
 
   const modes = [
     { id: 'focus', label: 'Focus', icon: '🎯' },
     { id: 'engineer', label: 'Engineer', icon: '⚙️' },
     { id: 'presentation', label: 'Present', icon: '🎪' }
+  ];
+
+  const tabs = [
+    { id: 'chat', label: 'Chat', icon: '💬' },
+    { id: 'pipeline', label: 'Pipeline', icon: '🔗' }
   ];
 </script>
 
@@ -35,6 +41,25 @@
 
   <hr class="border-panel/50" />
 
+  <!-- View Selector -->
+  <div class="space-y-2">
+    <div class="text-xs text-muted uppercase tracking-wide">View</div>
+    {#each tabs as tab}
+      <button
+        class="w-full px-3 py-2 rounded transition-colors text-sm"
+        class:bg-accent={activeTab === tab.id}
+        class:text-text={activeTab === tab.id}
+        class:bg-panel={activeTab !== tab.id}
+        class:text-muted={activeTab !== tab.id}
+        on:click={() => (activeTab = tab.id)}
+      >
+        {tab.icon} {tab.label}
+      </button>
+    {/each}
+  </div>
+
+  <hr class="border-panel/50" />
+
   <!-- Models -->
   <div class="space-y-2 flex-1 overflow-y-auto">
     <div class="text-xs text-muted uppercase tracking-wide">Models</div>
@@ -47,6 +72,7 @@
         class:bg-accent={model.active}
         class:bg-opacity-20={model.active}
         class:border-accent={model.active}
+        on:click={() => setActiveModel(model.id)}
       >
         <div class="font-medium text-text">{model.name}</div>
         <div class="text-xs text-muted">{model.params} • {model.tokensPerSec}</div>

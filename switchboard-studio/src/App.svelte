@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { switchboardStore } from './stores';
+  import { checkOllama, switchboardStore } from './stores';
   import Navigation from './components/Navigation.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import BottomComposer from './components/BottomComposer.svelte';
@@ -19,6 +19,13 @@
       .catch((err) => {
         console.error('Failed to connect to Switchboard broker:', err);
       });
+
+    checkOllama();
+    const timer = setInterval(() => {
+      checkOllama();
+    }, 5000);
+
+    return () => clearInterval(timer);
   });
 </script>
 
@@ -30,7 +37,7 @@
   <div class="flex flex-1 overflow-hidden">
     <!-- Left Sidebar -->
     {#if mode !== 'focus'}
-      <Navigation bind:mode />
+      <Navigation bind:mode bind:activeTab />
     {/if}
 
     <!-- Center Canvas -->

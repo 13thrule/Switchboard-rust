@@ -43,6 +43,14 @@ export const modelsStore = writable([
   }
 ]);
 
+export const ollamaStore = writable({
+  connected: false,
+  baseUrl: 'http://localhost:11434',
+  models: [],
+  lastCheck: null,
+  lastError: null
+});
+
 // Metrics
 export const metricsStore = writable({
   messages: 0,
@@ -59,6 +67,97 @@ export const graphStore = writable({
 });
 
 export const subscriptionsStore = writable([]);
+
+export function setActiveModel(modelId) {
+  modelsStore.update((models) =>
+    models.map((model) => ({
+      ...model,
+      active: model.id === modelId
+    }))
+  );
+}
+
+function normalizeModelName(name) {
+  if (!name) return 'unknown';
+  return name.split(':')[0];
+}
+
+export async function checkOllama() {
+  const endpoints = [
+    'http://localhost:11434/api/tags',
+    '/ollama/api/tags'
+  ];
+
+  try {
+    let data = null;
+    let endpointUsed = null;
+    let lastError = null;
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await fetch(endpoint, { method: 'GET' });
+        if (!res.ok) {
+          throw new Error(`tags request failed (${res.status})`);
+        }
+
+        data = await res.json();
+        endpointUsed = endpoint;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (!data) {
+      throw lastError ?? new Error('Unable to query Ollama tags');
+    }
+
+    const models = Array.isArray(data.models) ? data.models : [];
+
+    ollamaStore.set({
+      connected: true,
+      baseUrl: endpointUsed?.startsWith('http') ? 'http://localhost:11434' : 'via-dev-proxy',
+      models,
+      lastCheck: new Date(),
+      lastError: null
+    });
+
+    if (models.length > 0) {
+      modelsStore.update((existing) => {
+        const active = existing.find((m) => m.active);
+        const mapped = models.slice(0, 8).map((m) => {
+          const id = normalizeModelName(m.name);
+          const existingMatch = existing.find((e) => e.id === id);
+          return {
+            id,
+            name: normalizeModelName(m.name),
+            params: existingMatch?.params ?? 'local',
+            tokensPerSec: existingMatch?.tokensPerSec ?? '--',
+            active: active ? active.id === id : false
+          };
+        });
+
+        if (!mapped.some((m) => m.active) && mapped.length > 0) {
+          mapped[0].active = true;
+        }
+
+        return mapped;
+      });
+    }
+
+    return true;
+  } catch (err) {
+    ollamaStore.update((current) => ({
+      ...current,
+      connected: false,
+      lastCheck: new Date(),
+      lastError:
+        err?.message ??
+        'Unable to connect to Ollama. If Ollama runs on your local machine while Studio runs in a remote container, direct connection may fail without CORS or a reachable endpoint.'
+    }));
+    return false;
+  }
+}
 
 // WebSocket client
 export const switchboardStore = {
@@ -111,6 +210,10 @@ export const switchboardStore = {
           subscriptionsStore.set([]);
         };
       } catch (err) {
+        metricsStore.update((m) => ({
+          ...m,
+          errors: m.errors + 1
+        }));
         reject(err);
       }
     });

@@ -1,5 +1,5 @@
 <script>
-  import { connectionStore, modelsStore } from '../stores';
+  import { connectionStore, modelsStore, ollamaStore } from '../stores';
 
   let showMode = false;
 
@@ -21,6 +21,18 @@
     <span class="text-xs text-muted">
       {$connectionStore.transport} • {$connectionStore.latency}ms
     </span>
+
+    <span class="text-xs text-muted">|</span>
+
+    {#if $ollamaStore.connected}
+      <div class="w-2 h-2 rounded-full bg-ok animate-pulse" />
+      <span class="text-xs text-muted">Ollama connected</span>
+    {:else}
+      <div class="w-2 h-2 rounded-full bg-warn" />
+      <span class="text-xs text-muted" title={$ollamaStore.lastError ?? 'No Ollama response yet'}>
+        Ollama offline
+      </span>
+    {/if}
   </div>
 
   <!-- Center: Model Selector -->
