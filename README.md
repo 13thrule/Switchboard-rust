@@ -135,6 +135,11 @@ switchboard_refactored/switchboard/
 - ✓ `publish_no_subscribers_is_ok` — Graceful no-op on empty topics
 - ✓ `topic_count_deduplicates` — Proper topic accounting
 - ✓ `binary_topic_does_not_panic` — Non-UTF8 topic safety
+- ✓ `work_queue_single_worker_receives_message` — **Consumer group delivery**
+- ✓ `work_queue_round_robin_distribution` — **Lock-free round-robin across workers**
+- ✓ `work_queue_no_broadcast` — **Exactly-one delivery guarantee**
+- ✓ `work_queue_prefix_normalization` — **queue:// prefix activation**
+- ✓ `work_queue_broadcast_mode_isolation` — **Work queue and broadcast modes independent**
 
 ### Connection State Tests (unit)
 - ✓ `connection_state_transitions` — Handshake → Ready → Closed state machine
@@ -155,6 +160,7 @@ switchboard_refactored/switchboard/
 | **Multi-Topic Routing** | ✅ | Unlimited independent topics |
 | **Concurrent Subscribers** | ✅ | Multiple readers per topic, lock-free |
 | **Zero-Copy Broadcasting** | ✅ | All subscribers read same memory |
+| **Consumer Groups (Work Queues)** | ✅ | Exactly-one delivery with round-robin distribution |
 | **Waker-Driven (No Polling)** | ✅ | Event-based, 0% idle CPU |
 | **TCP Protocol** | ✅ | Binary pub/sub protocol |
 | **WebSocket Gateway** | ✅ | Browser clients on same port, same protocol |
@@ -445,6 +451,75 @@ RUST_LOG=debug cargo run --bin switchboard -- --port 7777
 
 If the demo can't connect, verify the server is listening on port 7777 with `lsof -i:7777 -Pn`, and check the server terminal for handshake logs.
 ```
+
+## Consumer Groups (Work Queues)
+
+Switchboard supports **consumer groups** for distributed task processing. Instead of broadcasting a message to all subscribers, work queues deliver each message to exactly one worker in a group.
+
+### When to Use Consumer Groups
+- **Distributed task processing:** Multiple workers process jobs from a queue
+- **Load balancing:** Messages are distributed round-robin across workers
+- **Competing consumers:** Only one worker handles each task (no duplication)
+- **Scaling out:** Add more workers to increase throughput
+
+### Activation
+Enable work queue mode by prefixing the topic with `queue://`:
+
+```bash
+# Standard broadcast mode (all subscribers receive all messages)
+./target/release/switchboard --client publish --topic events --message "market update"
+
+# Work queue mode (exactly one worker receives each message)
+./target/release/switchboard --client publish --topic queue://tasks --message "process order #12345"
+```
+
+### Implementation Details
+- **Lock-Free Round-Robin:** Uses `AtomicUsize` with `Ordering::Relaxed` for zero-contention distribution
+- **Exactly-Once Delivery:** Each message goes to exactly one worker (no duplication)
+- **Graceful Degradation:** If a worker disconnects, its channel is removed from the group
+- **Zero Overhead:** Single Mutex lock only during worker join; publish path is completely lock-free
+
+### Python SDK Example
+```python
+import asyncio
+from switchboard import Switchboard
+
+async def worker(worker_id: int, switchboard: Switchboard):
+    """Join work queue and process messages."""
+    # Subscribe with queue:// prefix
+    subscription = await switchboard.subscribe("queue://tasks")
+    
+    async for message in subscription:
+        print(f"Worker {worker_id} processing: {message.decode()}")
+        # Do actual work here
+        await asyncio.sleep(0.1)
+
+async def main():
+    switchboard = Switchboard("ws://127.0.0.1:3000")
+    await switchboard.connect()
+    
+    # Start 3 workers
+    workers = [
+        asyncio.create_task(worker(i, switchboard))
+        for i in range(3)
+    ]
+    
+    # Give workers time to subscribe
+    await asyncio.sleep(0.1)
+    
+    # Publish 9 tasks (distributed 0→3, 1→4, 2→5 round-robin)
+    for i in range(9):
+        await switchboard.publish("queue://tasks", f"task_{i}".encode())
+    
+    await asyncio.sleep(1)
+    for w in workers:
+        w.cancel()
+    await switchboard.close()
+
+asyncio.run(main())
+```
+
+See the full example: [examples/work_queue.py](examples/work_queue.py)
 
 ## Protocol Specification
 
