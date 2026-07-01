@@ -1,0 +1,33 @@
+[package]
+name = "switchboard-llm-fabric"
+version = "0.1.0"
+edition = "2021"
+description = "LLM Integration Layer for Switchboard - Protocol, Adapters, and Reference Implementations"
+authors = ["13thrule"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/13thrule/Switchboard-rust"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.11", features = ["stream", "json"] }
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[example]]
+name = "stub_inference_server"
+path = "examples/stub_inference_server.rs"
+
+[[example]]
+name = "ollama_adapter"
+path = "examples/ollama_adapter.rs"
+
+[[example]]
+name = "mock_ollama_adapter"
+path = "examples/mock_ollama_adapter.rs"
