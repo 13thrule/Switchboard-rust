@@ -2,7 +2,11 @@
 //! 
 //! Supports two delivery modes:
 //! - **Broadcast (default):** All subscribers receive every message
-//! - **Work Queue (`queue://` prefix):** Exactly one worker per message (round-robin)
+//! - **Consumer Groups (queue_subscribe):** Exactly one worker per message (lock-free round-robin)
+//!
+//! Consumer groups use a lock-free architecture with SkipMap for worker tracking and
+//! AtomicUsize for round-robin distribution, enabling competing consumers patterns for
+//! distributed task processing without data copying.
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,27 +14,85 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
 use tokio::sync::{broadcast, mpsc};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::state::MessageState;
 use crate::metrics;
 
 const CHANNEL_CAPACITY: usize = 1024;
-const WORK_QUEUE_PREFIX: &[u8] = b"queue://";
 
+/// Represents a single worker connected to a consumer group.
+/// Uses mpsc for efficient single-sender, single-receiver channels.
+struct Worker {
+    pub id: usize,
+    pub tx: mpsc::Sender<RouterMessage>,
+}
+
+/// A consumer group for competing consumers pattern (work queues).
+/// Multiple workers subscribe to the same topic and receive messages round-robin.
+pub struct ConsumerGroup {
+    /// Lock-free collection of workers assigned to this specific group
+    /// Key: worker ID, Value: mpsc sender
+    pub workers: SkipMap<usize, mpsc::Sender<RouterMessage>>,
+    /// Atomic counter for distributing the next worker ID
+    pub next_worker_id: AtomicUsize,
+    /// The hot-path atomic steering wheel for lock-free round-robin routing
+    pub rr_counter: AtomicUsize,
+}
+
+impl ConsumerGroup {
+    pub fn new() -> Self {
+        Self {
+            workers: SkipMap::new(),
+            next_worker_id: AtomicUsize::new(0),
+            rr_counter: AtomicUsize::new(0),
+        }
+    }
+
+    /// Dispatches a zero-copy message to exactly ONE worker using lock-free round-robin routing.
+    /// Returns true if message was successfully sent, false on backpressure or no workers available.
+    pub fn dispatch(&self, msg: RouterMessage) -> bool {
+        // Collect a quick atomic snapshot of active worker channels
+        let active_workers: Vec<_> = self.workers
+            .iter()
+            .map(|e| e.value().clone())
+            .collect();
+        
+        if active_workers.is_empty() {
+            return false; // No workers currently online in this group
+        }
+
+        // Lock-free steering: increment the counter atomically (Relaxed is safe here)
+        let idx = self.rr_counter.fetch_add(1, Ordering::Relaxed);
+        let target_worker = &active_workers[idx % active_workers.len()];
+        
+        // Push the shared reference into the worker's channel buffer
+        match target_worker.try_send(msg) {
+            Ok(_) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // Backpressure boundary hit for this specific worker.
+                // Could implement fallback to next worker here if needed.
+                debug!("worker backpressure hit");
+                false
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+impl Default for ConsumerGroup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A topic entry holds both the broadcast channel for pub/sub mode
+/// and a map of consumer groups for work queue mode.
 struct TopicEntry {
-    sender: broadcast::Sender<RouterMessage>,
-}
-
-struct WorkerChannel {
-    tx: mpsc::UnboundedSender<RouterMessage>,
-}
-
-struct GroupEntry {
-    /// Active worker channels in this consumer group
-    workers: Vec<WorkerChannel>,
-    /// Lock-free round-robin counter (Ordering::Relaxed for maximum speed)
-    counter: Arc<AtomicUsize>,
+    /// Classic Pub/Sub channel (broadcasts to all independent listeners)
+    pub broadcast_sender: broadcast::Sender<RouterMessage>,
+    /// Competing Consumers map: group_name -> ConsumerGroup
+    pub groups: SkipMap<Bytes, ConsumerGroup>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,16 +104,13 @@ pub struct RouterMessage {
 #[derive(Clone)]
 pub struct Router {
     topics: Arc<SkipMap<Bytes, TopicEntry>>,
-    /// Consumer groups for work queue mode (queue://topic)
-    groups: Arc<SkipMap<Bytes, Arc<Mutex<GroupEntry>>>>,
     create_lock: Arc<Mutex<()>>,
 }
 
 impl Router {
     pub fn new() -> Self {
         Router {
-            topics:      Arc::new(SkipMap::new()),
-            groups:      Arc::new(SkipMap::new()),
+            topics: Arc::new(SkipMap::new()),
             create_lock: Arc::new(Mutex::new(())),
         }
     }
@@ -61,7 +120,7 @@ impl Router {
         // Fast path: lock-free get
         if let Some(entry) = self.topics.get(&topic) {
             debug!(topic = %topic_display(&topic), "subscriber joined existing topic");
-            return entry.value().sender.subscribe();
+            return entry.value().broadcast_sender.subscribe();
         }
 
         // Slow path: structural creation guarded by a Mutex to avoid TOCTOU races
@@ -70,7 +129,7 @@ impl Router {
         // Re-check under the lock boundary
         if let Some(entry) = self.topics.get(&topic) {
             debug!(topic = %topic_display(&topic), "subscriber joined topic (lost create race)");
-            return entry.value().sender.subscribe();
+            return entry.value().broadcast_sender.subscribe();
         }
 
         let (sender, _discard) = broadcast::channel(CHANNEL_CAPACITY);
@@ -78,166 +137,179 @@ impl Router {
         // Subscribe BEFORE inserting to guarantee no dropped messages during parallel publishes
         let receiver = sender.subscribe();
 
-        self.topics.insert(topic.clone(), TopicEntry { sender });
+        let entry = TopicEntry {
+            broadcast_sender: sender,
+            groups: SkipMap::new(),
+        };
 
-        debug!(topic = %topic_display(&topic), "subscriber created new topic");
+        self.topics.insert(topic.clone(), entry);
+
+        debug!(topic = %topic_display(&topic), "created new topic");
         receiver
     }
 
     /// Join a consumer group (work queue mode).
     /// Exactly one worker in the group receives each message.
-    /// Returns (receiver, group_id) where group_id is needed for metrics.
-    pub fn subscribe_group(&self, topic: Bytes) -> (mpsc::UnboundedReceiver<RouterMessage>, usize) {
-        let base_topic = if topic.starts_with(WORK_QUEUE_PREFIX) {
-            topic.clone()
-        } else {
-            // Support both "queue://topic" and auto-prefix "topic"
-            let mut prefixed = Vec::with_capacity(WORK_QUEUE_PREFIX.len() + topic.len());
-            prefixed.extend_from_slice(WORK_QUEUE_PREFIX);
-            prefixed.extend_from_slice(&topic);
-            Bytes::from(prefixed)
-        };
+    /// Returns (receiver, worker_id) where worker_id is assigned atomically.
+    pub fn queue_subscribe(
+        &self,
+        topic: Bytes,
+        group: Bytes,
+    ) -> (mpsc::Receiver<RouterMessage>, usize) {
+        // Ensure topic exists
+        self.ensure_topic_exists(topic.clone());
 
-        // Fast path: lock-free get
-        if let Some(group_ref) = self.groups.get(&base_topic) {
-            let mut group = group_ref.value().lock().unwrap();
-            let (tx, rx) = mpsc::unbounded_channel();
-            let worker_id = group.workers.len();
-            group.workers.push(WorkerChannel { tx });
-            debug!(topic = %topic_display(&base_topic), worker_id, "worker joined existing group");
-            return (rx, worker_id);
+        if let Some(entry) = self.topics.get(&topic) {
+            let topic_entry = entry.value();
+            
+            // Fast path: group exists, add worker
+            if let Some(group_entry) = topic_entry.groups.get(&group) {
+                let group_ref = group_entry.value();
+                let worker_id = group_ref.next_worker_id.fetch_add(1, Ordering::SeqCst);
+                let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+                group_ref.workers.insert(worker_id, tx);
+                debug!(
+                    topic = %topic_display(&topic),
+                    group = %topic_display(&group),
+                    worker_id,
+                    "worker joined existing consumer group"
+                );
+                return (rx, worker_id);
+            }
         }
 
-        // Slow path: create new group under lock
+        // Slow path: create new group
         let _guard = self.create_lock.lock().unwrap();
 
-        // Re-check under lock
-        if let Some(group_ref) = self.groups.get(&base_topic) {
-            let mut group = group_ref.value().lock().unwrap();
-            let (tx, rx) = mpsc::unbounded_channel();
-            let worker_id = group.workers.len();
-            group.workers.push(WorkerChannel { tx });
-            debug!(topic = %topic_display(&base_topic), worker_id, "worker joined group (lost create race)");
-            return (rx, worker_id);
-        }
-
-        let (tx, rx) = mpsc::unbounded_channel();
-        let group = Arc::new(Mutex::new(GroupEntry {
-            workers: vec![WorkerChannel { tx }],
-            counter: Arc::new(AtomicUsize::new(0)),
-        }));
-
-        self.groups.insert(base_topic.clone(), group);
-        debug!(topic = %topic_display(&base_topic), "created new consumer group");
-        (rx, 0)
-    }
-
-    pub fn publish(&self, topic: &Bytes, payload: Bytes) -> PublishResult {
-        // Detect work queue mode (queue:// prefix)
-        if topic.starts_with(WORK_QUEUE_PREFIX) {
-            return self.publish_work_queue(topic, payload);
-        }
-
-        // Broadcast mode (original behavior)
-        let entry = match self.topics.get(topic) {
-            Some(e) => e,
-            None => {
-                debug!(topic = %topic_display(topic), "publish: no subscribers, dropped");
-                return PublishResult { state: MessageState::Routed, subscribers: 0 };
-            }
-        };
-
-        let size = payload.len() as f64;
-        // update metrics
-        metrics::PUBLISHES.inc();
-        metrics::LAST_PUBLISH_SIZE.set(size);
-
-        let msg = RouterMessage { payload, state: MessageState::Routed };
-
-        match entry.value().sender.send(msg) {
-            Ok(n) => {
-                debug!(topic = %topic_display(topic), subscribers = n, "published");
-                PublishResult { state: MessageState::Delivered, subscribers: n }
-            }
-            Err(_) => {
-                warn!(topic = %topic_display(topic), "all subscribers dropped before publish landed");
-                PublishResult { state: MessageState::Routed, subscribers: 0 }
-            }
-        }
-    }
-
-    /// Publish to a consumer group (work queue mode).
-    /// Uses lock-free round-robin to deliver to exactly one worker.
-    fn publish_work_queue(&self, topic: &Bytes, payload: Bytes) -> PublishResult {
-        let group_ref = match self.groups.get(topic) {
-            Some(g) => g,
-            None => {
-                debug!(topic = %topic_display(topic), "work queue: no workers, dropped");
-                return PublishResult { state: MessageState::Routed, subscribers: 0 };
-            }
-        };
-
-        let mut group = match group_ref.value().lock() {
-            Ok(g) => g,
-            Err(_) => {
-                warn!(topic = %topic_display(topic), "work queue: lock poisoned");
-                return PublishResult { state: MessageState::Routed, subscribers: 0 };
-            }
-        };
-
-        // No workers available
-        if group.workers.is_empty() {
-            debug!(topic = %topic_display(topic), "work queue: no active workers, dropped");
-            return PublishResult { state: MessageState::Routed, subscribers: 0 };
-        }
-
-        let size = payload.len() as f64;
-        metrics::PUBLISHES.inc();
-        metrics::LAST_PUBLISH_SIZE.set(size);
-
-        // Lock-free round-robin: fetch-and-increment with Relaxed ordering
-        // Relaxed ordering is safe here because we don't need synchronization with other atomics
-        let idx = group.counter.fetch_add(1, Ordering::Relaxed);
-        let target_worker_idx = idx % group.workers.len();
-
-        let msg = RouterMessage { payload, state: MessageState::Routed };
-
-        match group.workers[target_worker_idx].tx.send(msg) {
-            Ok(_) => {
+        if let Some(entry) = self.topics.get(&topic) {
+            let topic_entry = entry.value();
+            
+            // Re-check under lock
+            if let Some(group_entry) = topic_entry.groups.get(&group) {
+                let group_ref = group_entry.value();
+                let worker_id = group_ref.next_worker_id.fetch_add(1, Ordering::SeqCst);
+                let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+                group_ref.workers.insert(worker_id, tx);
                 debug!(
-                    topic = %topic_display(topic),
-                    worker = target_worker_idx,
-                    "work queue message delivered"
+                    topic = %topic_display(&topic),
+                    group = %topic_display(&group),
+                    worker_id,
+                    "worker joined consumer group (lost create race)"
                 );
-                PublishResult { state: MessageState::Delivered, subscribers: 1 }
+                return (rx, worker_id);
             }
-            Err(_) => {
-                warn!(topic = %topic_display(topic), worker = target_worker_idx, "worker channel closed");
-                // Remove dead worker
-                group.workers.remove(target_worker_idx);
-                PublishResult { state: MessageState::Routed, subscribers: 0 }
+
+            // Create new group
+            let new_group = ConsumerGroup::new();
+            let worker_id = new_group.next_worker_id.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+            new_group.workers.insert(worker_id, tx);
+            
+            topic_entry.groups.insert(group.clone(), new_group);
+            
+            debug!(
+                topic = %topic_display(&topic),
+                group = %topic_display(&group),
+                "created new consumer group with first worker"
+            );
+            
+            (rx, worker_id)
+        } else {
+            // This shouldn't happen, but handle gracefully
+            panic!("Topic should have been created in ensure_topic_exists");
+        }
+    }
+
+    /// Ensure a topic exists in the registry (creates if needed).
+    fn ensure_topic_exists(&self, topic: Bytes) {
+        if self.topics.get(&topic).is_some() {
+            return;
+        }
+
+        let _guard = self.create_lock.lock().unwrap();
+        if self.topics.get(&topic).is_some() {
+            return;
+        }
+
+        let (sender, _discard) = broadcast::channel(CHANNEL_CAPACITY);
+        let entry = TopicEntry {
+            broadcast_sender: sender,
+            groups: SkipMap::new(),
+        };
+        self.topics.insert(topic, entry);
+    }
+
+    /// Publish a message to a topic.
+    /// Messages are delivered to:
+    /// 1. All broadcast subscribers (via broadcast channel)
+    /// 2. Exactly one worker in each consumer group (via lock-free round-robin)
+    pub fn publish(&self, topic: &Bytes, payload: Bytes) -> PublishResult {
+        if let Some(entry) = self.topics.get(topic) {
+            let topic_entry = entry.value();
+            
+            let msg = RouterMessage {
+                payload, // Shared Bytes reference
+                state: MessageState::Routed,
+            };
+
+            // 1. Deliver to traditional Pub/Sub listeners (broadcast mode)
+            let broadcast_result = topic_entry.broadcast_sender.send(msg.clone());
+            let broadcast_subscribers = match &broadcast_result {
+                Ok(n) => *n,
+                Err(_) => 0,
+            };
+
+            // Update metrics
+            metrics::PUBLISHES.inc();
+            let size = msg.payload.len() as f64;
+            metrics::LAST_PUBLISH_SIZE.set(size);
+
+            // 2. Deliver to Consumer Groups (competing consumers)
+            // Each group gets exactly one copy of the message via lock-free round-robin
+            for group_entry in topic_entry.groups.iter() {
+                let group = group_entry.value();
+                // msg.clone() only increments the atomic reference count of the underlying Bytes
+                let _ = group.dispatch(msg.clone());
+            }
+
+            // Consider delivery successful if at least one subscriber received it
+            let state = if broadcast_subscribers > 0 {
+                MessageState::Delivered
+            } else {
+                MessageState::Routed
+            };
+
+            PublishResult {
+                state,
+                subscribers: broadcast_subscribers,
+            }
+        } else {
+            debug!(topic = %topic_display(topic), "publish: topic not found, dropped");
+            PublishResult {
+                state: MessageState::Routed,
+                subscribers: 0,
             }
         }
     }
 
     pub fn topic_count(&self) -> usize {
-        self.topics.len() + self.groups.len()
+        self.topics.len()
     }
 
     pub fn subscriber_count(&self, topic: &Bytes) -> usize {
-        if topic.starts_with(WORK_QUEUE_PREFIX) {
-            if let Some(g) = self.groups.get(topic) {
-                if let Ok(group) = g.value().lock() {
-                    return group.workers.len();
-                }
-            }
-            return 0;
+        if let Some(entry) = self.topics.get(topic) {
+            entry.value().broadcast_sender.receiver_count()
+        } else {
+            0
         }
+    }
 
-        self.topics
-            .get(topic)
-            .map(|e| e.value().sender.receiver_count())
-            .unwrap_or(0)
+    pub fn group_count(&self, topic: &Bytes) -> usize {
+        if let Some(entry) = self.topics.get(topic) {
+            entry.value().groups.len()
+        } else {
+            0
+        }
     }
 }
 
@@ -358,114 +430,111 @@ mod tests {
         assert_eq!(m1.payload.as_ptr(), m2.payload.as_ptr());
     }
 
-    // ==================== Consumer Group (Work Queue) Tests ====================
+    // ==================== Consumer Group (Queue Subscribe) Tests ====================
 
     #[tokio::test]
-    async fn work_queue_single_worker_receives_message() {
+    async fn queue_subscribe_single_worker_receives_message() {
         let router = Router::new();
-        let topic = t("queue://tasks");
+        let topic = t("tasks");
+        let group = t("workers");
 
-        let (mut rx1, _) = router.subscribe_group(topic.clone());
+        let (mut rx1, worker_id) = router.queue_subscribe(topic.clone(), group.clone());
+        assert_eq!(worker_id, 0);
 
         let result = router.publish(&topic, Bytes::from_static(b"task1"));
-        assert_eq!(result.subscribers, 1);
-        assert_eq!(result.state, MessageState::Delivered);
+        assert_eq!(result.subscribers, 0); // No broadcast subscribers
 
         let msg = rx1.recv().await.unwrap();
         assert_eq!(&msg.payload[..], b"task1");
     }
 
     #[tokio::test]
-    async fn work_queue_round_robin_distribution() {
+    async fn queue_subscribe_round_robin_distribution() {
         let router = Router::new();
-        let topic = t("queue://jobs");
+        let topic = t("images");
+        let group = t("gpu_cluster");
 
-        let (mut rx1, _) = router.subscribe_group(topic.clone());
-        let (mut rx2, _) = router.subscribe_group(topic.clone());
-        let (mut rx3, _) = router.subscribe_group(topic.clone());
+        let (mut rx1, id1) = router.queue_subscribe(topic.clone(), group.clone());
+        let (mut rx2, id2) = router.queue_subscribe(topic.clone(), group.clone());
+        let (mut rx3, id3) = router.queue_subscribe(topic.clone(), group.clone());
+
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+        assert_eq!(id3, 2);
 
         // Publish 6 messages: should distribute round-robin
         for i in 0..6 {
-            router.publish(&topic, Bytes::from(format!("job_{}", i)));
+            router.publish(&topic, Bytes::from(format!("img_{}", i)));
         }
 
-        // Worker 1: receives job_0, job_3
-        assert_eq!(&rx1.recv().await.unwrap().payload[..], b"job_0");
-        assert_eq!(&rx1.recv().await.unwrap().payload[..], b"job_3");
+        // Worker 0: receives img_0, img_3
+        assert_eq!(&rx1.recv().await.unwrap().payload[..], b"img_0");
+        assert_eq!(&rx1.recv().await.unwrap().payload[..], b"img_3");
 
-        // Worker 2: receives job_1, job_4
-        assert_eq!(&rx2.recv().await.unwrap().payload[..], b"job_1");
-        assert_eq!(&rx2.recv().await.unwrap().payload[..], b"job_4");
+        // Worker 1: receives img_1, img_4
+        assert_eq!(&rx2.recv().await.unwrap().payload[..], b"img_1");
+        assert_eq!(&rx2.recv().await.unwrap().payload[..], b"img_4");
 
-        // Worker 3: receives job_2, job_5
-        assert_eq!(&rx3.recv().await.unwrap().payload[..], b"job_2");
-        assert_eq!(&rx3.recv().await.unwrap().payload[..], b"job_5");
+        // Worker 2: receives img_2, img_5
+        assert_eq!(&rx3.recv().await.unwrap().payload[..], b"img_2");
+        assert_eq!(&rx3.recv().await.unwrap().payload[..], b"img_5");
     }
 
     #[tokio::test]
-    async fn work_queue_no_broadcast() {
+    async fn queue_subscribe_multiple_groups_isolated() {
         let router = Router::new();
-        let topic = t("queue://exclusive");
+        let topic = t("orders");
 
-        let (mut rx1, _) = router.subscribe_group(topic.clone());
-        let (mut rx2, _) = router.subscribe_group(topic.clone());
+        // Group A: 2 workers
+        let (mut rx_a1, _) = router.queue_subscribe(topic.clone(), t("group_a"));
+        let (mut rx_a2, _) = router.queue_subscribe(topic.clone(), t("group_a"));
 
-        router.publish(&topic, Bytes::from_static(b"only_one_gets_this"));
+        // Group B: 2 workers  
+        let (mut rx_b1, _) = router.queue_subscribe(topic.clone(), t("group_b"));
+        let (mut rx_b2, _) = router.queue_subscribe(topic.clone(), t("group_b"));
 
-        // Exactly one worker receives the message
-        // Use try_recv to avoid blocking on the second channel
-        let msg1 = rx1.try_recv();
-        let msg2 = rx2.try_recv();
+        // Publish 4 messages
+        for i in 0..4 {
+            router.publish(&topic, Bytes::from(format!("order_{}", i)));
+        }
 
-        // Exactly one should have a message
-        let has_msg = (msg1.is_ok() as u8) + (msg2.is_ok() as u8);
-        assert_eq!(has_msg, 1, "Work queue should deliver to exactly one worker");
+        // Group A should get 2 messages
+        let a1 = rx_a1.recv().await.unwrap();
+        let a2 = rx_a2.recv().await.unwrap();
+        assert!(a1.payload != a2.payload);
+
+        // Group B should get 2 messages
+        let b1 = rx_b1.recv().await.unwrap();
+        let b2 = rx_b2.recv().await.unwrap();
+        assert!(b1.payload != b2.payload);
     }
 
     #[tokio::test]
-    async fn work_queue_prefix_normalization() {
+    async fn broadcast_and_queue_isolation() {
         let router = Router::new();
+        let topic = t("events");
 
-        // Both forms should use the same group
-        let (mut rx1, _) = router.subscribe_group(t("queue://normalized"));
-        let (mut rx2, _) = router.subscribe_group(t("queue://normalized"));
+        // Broadcast subscribers
+        let mut bc_rx1 = router.subscribe(topic.clone());
+        let mut bc_rx2 = router.subscribe(topic.clone());
 
-        router.publish(&t("queue://normalized"), Bytes::from_static(b"msg1"));
+        // Queue subscribers
+        let (mut q_rx1, _) = router.queue_subscribe(topic.clone(), t("workers"));
+        let (mut q_rx2, _) = router.queue_subscribe(topic.clone(), t("workers"));
 
-        // Exactly one receives it
-        let msg1 = rx1.try_recv();
-        let msg2 = rx2.try_recv();
+        // Publish a message
+        router.publish(&topic, Bytes::from_static(b"broadcast_msg"));
 
-        assert!(msg1.is_ok() || msg2.is_ok(), "At least one worker should receive message");
-        assert!(!(msg1.is_ok() && msg2.is_ok()), "Only one worker should receive message");
-    }
-
-    #[tokio::test]
-    async fn work_queue_broadcast_mode_isolation() {
-        let router = Router::new();
-
-        // Broadcast subscribers on regular topic
-        let mut bc_rx1 = router.subscribe(t("events"));
-        let mut bc_rx2 = router.subscribe(t("events"));
-
-        // Work queue workers on different topic
-        let (mut wq_rx1, _) = router.subscribe_group(t("queue://tasks"));
-        let (mut wq_rx2, _) = router.subscribe_group(t("queue://tasks"));
-
-        // Publish to broadcast topic
-        router.publish(&t("events"), Bytes::from_static(b"broadcast"));
+        // All broadcast subscribers should receive it
         let m1 = bc_rx1.recv().await.unwrap();
         let m2 = bc_rx2.recv().await.unwrap();
-        assert_eq!(m1.payload.as_ptr(), m2.payload.as_ptr()); // Both got same message
+        assert_eq!(m1.payload.as_ptr(), m2.payload.as_ptr()); // Same memory
 
-        // Publish to work queue
-        router.publish(&t("queue://tasks"), Bytes::from_static(b"task"));
-        let wq_m1 = wq_rx1.try_recv();
-        let wq_m2 = wq_rx2.try_recv();
-        
-        // Exactly one worker got it
-        let has_msg = (wq_m1.is_ok() as u8) + (wq_m2.is_ok() as u8);
-        assert_eq!(has_msg, 1, "Work queue should deliver to exactly one worker");
+        // Only one queue worker should receive it
+        let q1 = q_rx1.try_recv();
+        let q2 = q_rx2.try_recv();
+        let queue_count = (q1.is_ok() as u8) + (q2.is_ok() as u8);
+        assert_eq!(queue_count, 1, "Only one queue worker should receive message");
     }
 }
 

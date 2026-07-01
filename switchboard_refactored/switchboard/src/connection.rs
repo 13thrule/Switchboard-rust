@@ -4,16 +4,19 @@
 
 use anyhow::{Context, Result};
 use bytes::{BufMut, Bytes, BytesMut};
+use futures_util::stream::Stream;
+use std::pin::Pin;
+use std::task::{Context as TaskContext, Poll};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
     },
-    sync::{broadcast, mpsc},
+    sync::mpsc,
 };
-use tokio_stream::{wrappers::BroadcastStream, StreamExt, StreamMap};
-use tracing::{debug, error, info, warn};
+use tokio_stream::{wrappers::{BroadcastStream, ReceiverStream}, StreamExt, StreamMap};
+use tracing::{debug, error, info};
 
 use crate::{
     connection_ws::run_websocket_connection,
@@ -24,9 +27,42 @@ use crate::{
 
 const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024;
 
+/// Unified subscription stream that handles both broadcast and queue modes
+enum UnifiedStream {
+    Broadcast(BroadcastStream<RouterMessage>),
+    Queue(ReceiverStream<RouterMessage>),
+}
+
+impl Stream for UnifiedStream {
+    type Item = RouterMessage;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        match &mut *self {
+            UnifiedStream::Broadcast(stream) => {
+                // Handle broadcast stream which returns Result<RouterMessage, Error>
+                loop {
+                    match Pin::new(&mut *stream).poll_next(cx) {
+                        Poll::Ready(Some(Ok(msg))) => return Poll::Ready(Some(msg)),
+                        Poll::Ready(Some(Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)))) => {
+                            // Skip lagged messages and continue polling
+                            continue;
+                        }
+                        Poll::Ready(None) => return Poll::Ready(None),
+                        Poll::Pending => return Poll::Pending,
+                    }
+                }
+            }
+            UnifiedStream::Queue(stream) => {
+                // Queue stream returns Option<RouterMessage> directly
+                Pin::new(&mut *stream).poll_next(cx)
+            }
+        }
+    }
+}
+
 struct NewSubscription {
-    topic:    Bytes,
-    receiver: broadcast::Receiver<RouterMessage>,
+    topic:  Bytes,
+    stream: UnifiedStream,
 }
 
 pub struct Connection {
@@ -157,10 +193,11 @@ async fn handle_frame(
             info!(
                 peer  = %peer,
                 topic = %String::from_utf8_lossy(&topic),
-                "subscribed"
+                "subscribed (broadcast)"
             );
+            let stream = UnifiedStream::Broadcast(BroadcastStream::new(receiver));
             sub_tx
-                .send(NewSubscription { topic, receiver })
+                .send(NewSubscription { topic, stream })
                 .await
                 .context("sending subscription to write_task")?;
         }
@@ -173,6 +210,21 @@ async fn handle_frame(
                 "published"
             );
         }
+        Frame::QueueSubscribe { topic, group } => {
+            let (receiver, worker_id) = router.queue_subscribe(topic.clone(), group.clone());
+            info!(
+                peer      = %peer,
+                topic     = %String::from_utf8_lossy(&topic),
+                group     = %String::from_utf8_lossy(&group),
+                worker_id = worker_id,
+                "subscribed (consumer group)"
+            );
+            let stream = UnifiedStream::Queue(ReceiverStream::new(receiver));
+            sub_tx
+                .send(NewSubscription { topic, stream })
+                .await
+                .context("sending consumer group subscription to write_task")?;
+        }
     }
     Ok(())
 }
@@ -182,10 +234,7 @@ async fn write_task(
     peer:       std::net::SocketAddr,
     mut sub_rx: mpsc::Receiver<NewSubscription>,
 ) -> Result<()> {
-    let mut stream_map: StreamMap<
-        Bytes,
-        BroadcastStream<RouterMessage>,
-    > = StreamMap::new();
+    let mut stream_map: StreamMap<Bytes, UnifiedStream> = StreamMap::new();
 
     loop {
         tokio::select! {
@@ -199,10 +248,7 @@ async fn write_task(
                             topic = %String::from_utf8_lossy(&sub.topic),
                             "write_task: registered subscription"
                         );
-                        stream_map.insert(
-                            sub.topic,
-                            BroadcastStream::new(sub.receiver),
-                        );
+                        stream_map.insert(sub.topic, sub.stream);
                     }
                     None => {
                         info!(peer = %peer, "write_task: sub_rx closed, exiting");
@@ -211,22 +257,10 @@ async fn write_task(
                 }
             }
 
-            Some((topic, result)) = stream_map.next(), if !stream_map.is_empty() => {
-                match result {
-                    Ok(msg) => {
-                        if let Err(e) = write_message(&mut stream, &topic, &msg.payload).await {
-                            error!(peer = %peer, error = %e, "write_task: stream write error");
-                            break;
-                        }
-                    }
-                    Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
-                        warn!(
-                            peer    = %peer,
-                            topic   = %String::from_utf8_lossy(&topic),
-                            dropped = n,
-                            "write_task: subscriber lagged — messages dropped"
-                        );
-                    }
+            Some((topic, msg)) = stream_map.next(), if !stream_map.is_empty() => {
+                if let Err(e) = write_message(&mut stream, &topic, &msg.payload).await {
+                    error!(peer = %peer, error = %e, "write_task: stream write error");
+                    break;
                 }
             }
         }

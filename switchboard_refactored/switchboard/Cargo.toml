@@ -18,6 +18,15 @@ bytes = "1"
 # Lock-free skip list for topic registry
 crossbeam-skiplist = "0.1"
 
+# Async traits
+async-trait = "0.1"
+
+# Parking lot synchronization primitives (faster than std::sync)
+parking_lot = "0.12"
+
+# Concurrent hash map (sharded locking)
+dashmap = "5"
+
 # Async stream utilities and combinators
 tokio-stream = { version = "0.1", features = ["sync", "net"] }
 
