@@ -40,7 +40,7 @@
     {#each $modelsStore as model}
       {#if model.active}
         <div class="flex items-center gap-1 px-2 py-1 rounded bg-accent/10 border border-accent/30">
-          <span class="text-xs font-medium">{model.name}</span>
+          <span class="text-xs font-medium" title={model.name}>{model.name}</span>
           <span class="text-xs text-muted">{model.tokensPerSec} tok/s</span>
         </div>
       {/if}

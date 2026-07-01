@@ -82,6 +82,20 @@ function normalizeModelName(name) {
   return name.split(':')[0];
 }
 
+function appendUiMessage({ topic, payload, provenance = 'studio', latency = 0 }) {
+  messagesStore.update((msgs) => [
+    ...msgs,
+    {
+      id: Math.random().toString(36),
+      topic,
+      payload,
+      provenance,
+      timestamp: new Date(),
+      latency
+    }
+  ].slice(-100));
+}
+
 export async function checkOllama() {
   const endpoints = [
     'http://localhost:11434/api/tags',
@@ -126,11 +140,11 @@ export async function checkOllama() {
       modelsStore.update((existing) => {
         const active = existing.find((m) => m.active);
         const mapped = models.slice(0, 8).map((m) => {
-          const id = normalizeModelName(m.name);
+          const id = m.name;
           const existingMatch = existing.find((e) => e.id === id);
           return {
             id,
-            name: normalizeModelName(m.name),
+            name: m.name,
             params: existingMatch?.params ?? 'local',
             tokensPerSec: existingMatch?.tokensPerSec ?? '--',
             active: active ? active.id === id : false
@@ -138,7 +152,8 @@ export async function checkOllama() {
         });
 
         if (!mapped.some((m) => m.active) && mapped.length > 0) {
-          mapped[0].active = true;
+          const qwen = mapped.find((m) => m.id.includes('qwen2.5-coder'));
+          (qwen ?? mapped[0]).active = true;
         }
 
         return mapped;
@@ -266,18 +281,7 @@ export const switchboardStore = {
       return false;
     }
 
-    const now = new Date();
-    messagesStore.update((msgs) => [
-      ...msgs,
-      {
-        id: Math.random().toString(36),
-        topic,
-        payload,
-        provenance: 'studio',
-        timestamp: now,
-        latency: 0
-      }
-    ].slice(-100));
+    appendUiMessage({ topic, payload, provenance: 'studio', latency: 0 });
     
     const topicBytes = textEncoder.encode(topic);
     const payloadBytes = textEncoder.encode(payload);
@@ -306,3 +310,56 @@ export const switchboardStore = {
     return true;
   }
 };
+
+export async function runOllamaInference(prompt, model) {
+  const endpoints = ['http://localhost:11434/api/generate', '/ollama/api/generate'];
+  let lastError = null;
+
+  for (const endpoint of endpoints) {
+    try {
+      const started = performance.now();
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          prompt,
+          stream: false
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`generate failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      const responseText = data?.response ?? '';
+      const elapsed = Math.max(1, performance.now() - started);
+
+      appendUiMessage({
+        topic: 'stream.text',
+        payload: responseText,
+        provenance: 'ollama',
+        latency: elapsed
+      });
+
+      metricsStore.update((m) => ({
+        ...m,
+        latency: elapsed
+      }));
+
+      return { ok: true, response: responseText, elapsed };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  ollamaStore.update((current) => ({
+    ...current,
+    connected: false,
+    lastCheck: new Date(),
+    lastError: lastError?.message ?? 'Failed to run Ollama inference'
+  }));
+
+  return { ok: false, error: lastError?.message ?? 'Failed to run Ollama inference' };
+}

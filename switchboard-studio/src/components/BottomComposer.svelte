@@ -1,5 +1,5 @@
 <script>
-  import { connectionStore, modelsStore, switchboardStore } from '../stores';
+  import { connectionStore, modelsStore, ollamaStore, runOllamaInference, switchboardStore } from '../stores';
 
   let prompt = '';
   let expanded = false;
@@ -8,6 +8,7 @@
   let showTemplates = false;
   let explain = false;
   let sandbox = true;
+  let useOllama = true;
 
   const templates = [
     { label: 'Chat', topic: 'prompt.in', prompt: 'Help me reason through this step by step.' },
@@ -28,12 +29,25 @@
   function handleSend() {
     if (prompt.trim()) {
       const effectiveTopic = sandbox ? `sandbox.${topic}` : topic;
-      const payload = explain
+      const basePrompt = explain
         ? `[model=${activeModel}] ${prompt}\n\nExplain your reasoning clearly.`
         : `[model=${activeModel}] ${prompt}`;
-      const ok = switchboardStore.publish(effectiveTopic, payload);
+      const ok = switchboardStore.publish(effectiveTopic, basePrompt);
       if (ok) {
         status = `sent to ${effectiveTopic}`;
+
+        if (useOllama && $ollamaStore.connected && topic === 'prompt.in') {
+          status = `sent to ${effectiveTopic}, running ${activeModel}...`;
+          runOllamaInference(basePrompt, activeModel).then((result) => {
+            if (result.ok) {
+              switchboardStore.publish(sandbox ? 'sandbox.stream.text' : 'stream.text', result.response);
+              status = `response received from ${activeModel}`;
+            } else {
+              status = `ollama inference failed: ${result.error}`;
+            }
+          });
+        }
+
         prompt = '';
       } else {
         status = 'not connected to broker';
@@ -93,6 +107,10 @@
         <label class="flex items-center gap-1">
           <input type="checkbox" class="rounded" bind:checked={sandbox} />
           <span>Sandbox mode</span>
+        </label>
+        <label class="flex items-center gap-1">
+          <input type="checkbox" class="rounded" bind:checked={useOllama} />
+          <span>Use Ollama</span>
         </label>
       </div>
     </div>
