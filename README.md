@@ -1,7 +1,6 @@
 # Switchboard — Ultra-Low Latency Async Pub/Sub Message Broker
 
 [![CI Status](https://github.com/13thrule/Switchboard-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/13thrule/Switchboard-rust/actions)
-[![Crates.io Version](https://img.shields.io/crates/v/switchboard.svg?color=orange)](https://crates.io/crates/switchboard)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.96.0+-blue.svg)](https://www.rust-lang.org)
 [![Test Coverage](https://img.shields.io/badge/tests-34%2F34%20%E2%9C%93-brightgreen.svg)](https://github.com/13thrule/Switchboard-rust/blob/main/README.md#test-suite--validation-)
