@@ -1,14 +1,20 @@
 <script>
-  import { switchboardStore } from '../stores';
+  import { connectionStore, switchboardStore } from '../stores';
 
   let prompt = '';
   let expanded = false;
   let topic = 'prompt.in';
+  let status = '';
 
   function handleSend() {
     if (prompt.trim()) {
-      switchboardStore.publish(topic, prompt);
-      prompt = '';
+      const ok = switchboardStore.publish(topic, prompt);
+      if (ok) {
+        status = `sent to ${topic}`;
+        prompt = '';
+      } else {
+        status = 'not connected to broker';
+      }
     }
   }
 
@@ -21,6 +27,10 @@
 </script>
 
 <div class="bg-panel border-t border-panel/50 p-4">
+  {#if status}
+    <div class="mb-2 text-xs text-muted">{status}</div>
+  {/if}
+
   {#if expanded}
     <div class="space-y-3 mb-4">
       <div class="flex gap-2">
@@ -59,6 +69,7 @@
     <button
       class="px-4 py-2 bg-accent text-bg rounded font-medium hover:bg-accent/90 transition-colors"
       on:click={handleSend}
+      disabled={!$connectionStore.connected}
     >
       Send
     </button>

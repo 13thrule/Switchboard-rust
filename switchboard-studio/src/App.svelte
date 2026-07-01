@@ -13,8 +13,12 @@
   let activeTab = 'chat'; // 'chat', 'pipeline'
 
   onMount(() => {
-    // Initialize connection
-    switchboardStore.connect('ws://localhost:7777');
+    // Initialize connection and subscribe to core LLM/demo topics.
+    switchboardStore
+      .connect('ws://localhost:7777', ['prompt.in', 'tokens.out', 'stream.text', 'metrics', 'demo'])
+      .catch((err) => {
+        console.error('Failed to connect to Switchboard broker:', err);
+      });
   });
 </script>
 

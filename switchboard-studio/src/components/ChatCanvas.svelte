@@ -12,7 +12,14 @@
         in:fly={{ x: 18, duration: 360, easing: t => 1 - Math.pow(1 - t, 3) }}
       >
         <div class="flex items-center justify-between mb-2">
-          <span class="text-xs font-mono text-accent">{msg.topic}</span>
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-mono text-accent">{msg.topic}</span>
+            {#if msg.provenance}
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-panel border border-panel/70 text-muted uppercase tracking-wide">
+                {msg.provenance}
+              </span>
+            {/if}
+          </div>
           <span class="text-xs text-muted">{msg.latency.toFixed(1)}ms</span>
         </div>
         <div class="text-sm text-text break-words">
