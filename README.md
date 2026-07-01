@@ -104,16 +104,17 @@ switchboard_refactored/switchboard/
 
 ## Test Suite & Validation ✅
 
-**All 13 tests pass successfully:**
+**All tests pass successfully:**
 
-### Protocol Tests
+### Protocol Tests (unit)
 - ✓ `publish_too_short_is_error` — Validates frame format
 - ✓ `roundtrip_publish` — Serialization roundtrip accuracy
 - ✓ `roundtrip_subscribe` — Subscribe message integrity
+- ✓ `parse_prefixed_publish` — Handles optional 4-byte length prefix
 - ✓ `bytes_clone_is_zero_copy` — Confirms zero-copy behavior
 - ✓ `unknown_type_is_error` — Error handling for invalid messages
 
-### Router Tests
+### Router Tests (unit)
 - ✓ `multiple_subscribers_zero_copy` — **Multiple subscribers read same `Bytes` reference**
 - ✓ `subscribe_then_publish` — Full pub/sub flow
 - ✓ `concurrent_subscribe_no_orphan` — Race condition resilience
@@ -121,12 +122,17 @@ switchboard_refactored/switchboard/
 - ✓ `topic_count_deduplicates` — Proper topic accounting
 - ✓ `binary_topic_does_not_panic` — Non-UTF8 topic safety
 
-### Connection State Tests
+### Connection State Tests (unit)
 - ✓ `connection_state_transitions` — Handshake → Ready → Closed state machine
 - ✓ `message_state_transitions` — Routed → Delivered message lifecycle
 
-**Test Execution Time:** 0.00s (sub-millisecond)  
-**Test Results:** 13 passed; 0 failed
+### Integration Tests
+- ✓ `websocket_gateway_roundtrip` — Full subscribe + publish cycle over a real WebSocket connection
+- ✓ `masked_websocket_roundtrip` — Browser-masked WebSocket frames handled correctly
+- ✓ `rejects_oversized_prefixed_frame` — Server drops and closes on frames > 16 MB
+
+**Test Execution Time:** Sub-millisecond  
+**Test Results:** All passed; 0 failed
 
 ## Capabilities
 
@@ -137,10 +143,72 @@ switchboard_refactored/switchboard/
 | **Zero-Copy Broadcasting** | ✅ | All subscribers read same memory |
 | **Waker-Driven (No Polling)** | ✅ | Event-based, 0% idle CPU |
 | **TCP Protocol** | ✅ | Binary pub/sub protocol |
+| **WebSocket Gateway** | ✅ | Browser clients on same port, same protocol |
+| **Prometheus Metrics** | ✅ | `/metrics` endpoint on port 9090 |
+| **Docker Support** | ✅ | Multi-stage Dockerfile included |
 | **Built-in CLI** | ✅ | Server, publisher, subscriber modes |
 | **Async Runtime** | ✅ | Tokio-based, fully async |
 | **Error Recovery** | ✅ | Graceful connection drops, state cleanup |
 | **Logging** | ✅ | Structured `tracing` logs |
+
+## Prometheus Metrics
+
+Switchboard exposes a Prometheus-compatible `/metrics` endpoint on port **9090** automatically whenever the server starts.
+
+### Available Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `switchboard_connections_total` | Counter | Total accepted TCP/WebSocket connections |
+| `switchboard_publishes_total` | Counter | Total messages published across all topics |
+| `switchboard_last_publish_size_bytes` | Gauge | Payload size of the most recently published message |
+
+### Scrape Example
+
+```bash
+# Start server
+RUST_LOG=info ./target/release/switchboard --port 7777
+
+# Query metrics
+curl http://localhost:9090/metrics
+```
+
+Sample output:
+```
+# HELP switchboard_connections_total Total accepted connections
+# TYPE switchboard_connections_total counter
+switchboard_connections_total 4
+# HELP switchboard_publishes_total Total published messages
+# TYPE switchboard_publishes_total counter
+switchboard_publishes_total 100000
+# HELP switchboard_last_publish_size_bytes Size of last published message
+# TYPE switchboard_last_publish_size_bytes gauge
+switchboard_last_publish_size_bytes 64
+```
+
+Add a Prometheus scrape config:
+```yaml
+scrape_configs:
+  - job_name: switchboard
+    static_configs:
+      - targets: ['localhost:9090']
+```
+
+## Docker
+
+A multi-stage Dockerfile is included for containerized deployments.
+
+### Build and run
+
+```bash
+# Build the image from the repository root
+docker build -f switchboard_refactored/switchboard/Dockerfile -t switchboard .
+
+# Run the broker
+docker run -p 7777:7777 -p 9090:9090 switchboard
+```
+
+The container exposes port **7777** (broker) and you can additionally expose port **9090** for metrics scraping.
 
 ## Installation & Setup
 
@@ -339,6 +407,7 @@ socket.addEventListener('message', (evt) => {
   const data = new Uint8Array(evt.data);
   console.log('got binary', data);
 });
+```
 
 ### Interactive demo page
 You can open a small interactive demo page that connects to a locally-running Switchboard server and provides Connect / Subscribe / Publish buttons.
@@ -485,5 +554,5 @@ Binary size: ~15MB (release build)
 
 ---
 
-**Last Updated:** June 18, 2026  
+**Last Updated:** July 1, 2026  
 **Status:** Production Ready ✅
