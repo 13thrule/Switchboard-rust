@@ -1,14 +1,22 @@
 # Switchboard — Ultra-Low Latency Async Pub/Sub Message Broker
 
-[![CI](https://github.com/13thrule/Switchboard-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/13thrule/Switchboard-rust/actions)
-[![Docs](https://img.shields.io/badge/docs-rustdoc-blue.svg)](https://docs.rs)
-[![Crates.io](https://img.shields.io/crates/v/switchboard.svg)](https://crates.io)
+[![CI Status](https://github.com/13thrule/Switchboard-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/13thrule/Switchboard-rust/actions)
+[![Crates.io Version](https://img.shields.io/crates/v/switchboard.svg?color=orange)](https://crates.io/crates/switchboard)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.96.0+-blue.svg)](https://www.rust-lang.org)
+[![Test Coverage](https://img.shields.io/badge/tests-34%2F34%20%E2%9C%93-brightgreen.svg)](https://github.com/13thrule/Switchboard-rust/blob/main/README.md#test-suite--validation-)
+[![Latency](https://img.shields.io/badge/latency-2%C2%B5s%20%28IPC%29%20%7C%20200%C2%B5s%20%28TCP%29-blueviolet.svg)](#performance-characteristics)
+[![Throughput](https://img.shields.io/badge/throughput-851k%20msg%2Fs-brightblue.svg)](#benchmarks)
+[![GitHub Stars](https://img.shields.io/github/stars/13thrule/Switchboard-rust?style=social)](https://github.com/13thrule/Switchboard-rust)
 
 A **zero-copy, event-driven message broker** built in Rust for blazingly fast inter-system communication. Switchboard eliminates the two biggest bottlenecks in traditional message brokers: **wasteful memory copying** and **expensive polling loops**.
 
-> Try Switchboard in 3 commands — start the server, subscribe, then publish. Star the repo if you find it useful ⭐
+**Enterprise-Ready Features:**
+- 🚀 **Phase 4:** Local IPC via Shared Memory — **100x latency improvement** (2 μs vs 200 μs)
+- 🔄 **Phase 5:** Lock-Free Trie Router — **O(depth) wildcard patterns** (`*` and `>` support)
+- 🎯 **34/34 tests passing** — Fully validated across TCP, WebSocket, SHM, and pattern matching
+
+> Try Switchboard in 3 commands — start the server, subscribe, then publish. Star the repo if you find it useful ⭐ | **[Live Demo 🎮](https://13thrule.github.io/Switchboard-rust/demo/)**
 
 ## Battle-Tested in Chaos 🌪️
 

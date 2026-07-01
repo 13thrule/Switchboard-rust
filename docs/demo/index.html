@@ -1,0 +1,257 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Switchboard WebSocket Demo</title>
+  <style>
+    body {
+      font-family: system-ui, Segoe UI, Roboto, Arial;
+      margin: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      color: #667eea;
+      margin-bottom: 10px;
+    }
+    .subtitle {
+      color: #999;
+      margin-bottom: 30px;
+    }
+    .controls {
+      display: grid;
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+    .control-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 500;
+    }
+    input[type="text"] {
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    button {
+      padding: 8px 16px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.3s;
+    }
+    button:hover:not(:disabled) {
+      background: #5568d3;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .log-container {
+      background: #111;
+      color: #0f0;
+      padding: 15px;
+      border-radius: 6px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      height: 300px;
+      overflow-y: auto;
+      margin-bottom: 20px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      font-weight: 500;
+    }
+    .status.disconnected {
+      background: #fee;
+      color: #c33;
+    }
+    .status.connected {
+      background: #efe;
+      color: #3c3;
+    }
+    h3 {
+      color: #333;
+      margin-top: 0;
+    }
+    .info-box {
+      background: #f0f4ff;
+      border-left: 4px solid #667eea;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 Switchboard WebSocket Demo</h1>
+    <p class="subtitle">Interactive pub/sub demonstration with live binary protocol frames</p>
+    
+    <div id="status" class="status disconnected">⚫ Disconnected</div>
+    
+    <div class="info-box">
+      <strong>Getting Started:</strong> Make sure you have a Switchboard instance running on <code>ws://localhost:7777</code>.
+      Start by clicking "Connect", then "Subscribe" to a topic, and "Publish" a message to see it in the logs below.
+    </div>
+
+    <div class="controls">
+      <div class="control-row">
+        <label>Topic: <input id="topic" value="demo" /></label>
+      </div>
+      <div class="control-row">
+        <button id="connect">Connect</button>
+        <button id="sub" disabled>Subscribe</button>
+        <button id="pub" disabled>Publish</button>
+        <input id="payload" value="hello from browser" placeholder="Message to publish" />
+      </div>
+    </div>
+
+    <h3>Protocol Logs</h3>
+    <div id="log" class="log-container"></div>
+
+    <p style="font-size: 12px; color: #999; margin-top: 15px;">
+      💡 <strong>Tip:</strong> Open multiple browser tabs and publish from one while subscribing in another to see real-time message delivery.
+    </p>
+  </div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    const statusEl = document.getElementById('status');
+    
+    function log(...s) {
+      const timestamp = new Date().toLocaleTimeString();
+      logEl.textContent += `[${timestamp}] ${s.join(' ')}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    let socket = null;
+
+    function updateStatus() {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        statusEl.textContent = '🟢 Connected';
+        statusEl.className = 'status connected';
+        document.getElementById('sub').disabled = false;
+        document.getElementById('pub').disabled = false;
+      } else {
+        statusEl.textContent = '⚫ Disconnected';
+        statusEl.className = 'status disconnected';
+        document.getElementById('sub').disabled = true;
+        document.getElementById('pub').disabled = true;
+      }
+    }
+
+    document.getElementById('connect').onclick = () => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.close();
+        socket = null;
+        document.getElementById('connect').textContent = 'Connect';
+        updateStatus();
+        return;
+      }
+
+      document.getElementById('connect').textContent = 'Connecting...';
+      socket = new WebSocket('ws://localhost:7777');
+      socket.binaryType = 'arraybuffer';
+
+      socket.addEventListener('open', () => {
+        log('✅ Connection opened');
+        document.getElementById('connect').textContent = 'Disconnect';
+        updateStatus();
+      });
+
+      socket.addEventListener('message', evt => {
+        const data = new Uint8Array(evt.data);
+        log(`📨 Received: ${data.length} bytes [${Array.from(data.slice(0, 16)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}${data.length > 16 ? ', ...' : ''}]`);
+        
+        try {
+          // Parse publish frames (format: [4 bytes length][0x02][2 bytes topic_len][topic][payload])
+          if (data.length > 4 && data[4] === 0x02) {
+            const topicLen = (data[5] << 8) | data[6];
+            const topic = new TextDecoder().decode(data.slice(7, 7 + topicLen));
+            const payload = new TextDecoder().decode(data.slice(7 + topicLen));
+            log(`   📌 Topic: "${topic}"`);
+            log(`   💬 Payload: "${payload}"`);
+          }
+        } catch (e) {
+          log(`   ⚠️  Parse error: ${e.message}`);
+        }
+      });
+
+      socket.addEventListener('close', () => {
+        log('❌ Connection closed');
+        document.getElementById('connect').textContent = 'Connect';
+        updateStatus();
+      });
+
+      socket.addEventListener('error', e => {
+        log(`❌ Error: ${e && e.message ? e.message : 'Connection failed'}`);
+        document.getElementById('connect').textContent = 'Connect';
+        updateStatus();
+      });
+    };
+
+    document.getElementById('sub').onclick = () => {
+      const topic = document.getElementById('topic').value;
+      if (!topic) {
+        log('⚠️  Topic cannot be empty');
+        return;
+      }
+      const topicBytes = new TextEncoder().encode(topic);
+      const sub = new Uint8Array(1 + topicBytes.length);
+      sub[0] = 0x01;
+      sub.set(topicBytes, 1);
+      socket.send(sub.buffer);
+      log(`📤 Sent SUBSCRIBE: topic="${topic}" (${1 + topicBytes.length} bytes)`);
+    };
+
+    document.getElementById('pub').onclick = () => {
+      const topic = document.getElementById('topic').value;
+      const payload = new TextEncoder().encode(document.getElementById('payload').value);
+      if (!topic) {
+        log('⚠️  Topic cannot be empty');
+        return;
+      }
+      
+      const topicBytes = new TextEncoder().encode(topic);
+      const bodyLen = 1 + 2 + topicBytes.length + payload.length;
+      const pub = new Uint8Array(4 + bodyLen);
+      const dv = new DataView(pub.buffer);
+      dv.setUint32(0, bodyLen);
+      pub[4] = 0x02;
+      dv.setUint16(5, topicBytes.length);
+      pub.set(topicBytes, 7);
+      pub.set(payload, 7 + topicBytes.length);
+      socket.send(pub.buffer);
+      log(`📤 Sent PUBLISH: topic="${topic}", payload="${document.getElementById('payload').value}" (${4 + bodyLen} bytes)`);
+    };
+
+    updateStatus();
+    log('💡 Ready. Click "Connect" to start.');
+  </script>
+</body>
+</html>
