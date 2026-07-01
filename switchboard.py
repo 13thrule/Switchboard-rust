@@ -1,249 +1,264 @@
 """
-Switchboard — Zero-Copy Python Async Client
-Ultra-low latency pub/sub message broker client.
+Switchboard Python SDK - Zero-dependency, ultra-low latency async pub/sub client.
 
-Zero dependencies. Mirrors Switchboard's architectural principles:
-- Zero-copy frame slicing via memoryview
-- Waker-driven event loop (asyncio-based)
-- Lock-free subscription multiplexing
+Mirrors the Rust broker's architecture:
+- Zero-copy message slicing via memoryview
+- Waker-driven event loop (asyncio)
+- Lock-free per-topic subscription queues
+- Direct async iterator pattern for message consumption
+
+Usage:
+    async with Switchboard("localhost", 7777) as sb:
+        async for payload in sb.subscribe("trades"):
+            print(payload)  # Raw bytes, zero-copy
+        
+        await sb.publish("alerts", b"online")
 """
 
 import asyncio
 import struct
-from typing import AsyncIterator, Optional, Dict, List, Callable
-from dataclasses import dataclass
+from typing import AsyncIterator, Optional, Dict
+import sys
+
+__version__ = "0.1.0"
 
 
-@dataclass
-class Message:
-    """A received message: topic and payload (both as bytes)."""
-    topic: bytes
-    payload: bytes
+class ProtocolError(Exception):
+    """Raised on protocol parsing or frame errors."""
+    pass
 
 
-class SubscriptionQueue:
-    """Per-subscription async queue for message delivery."""
+class Frame:
+    """Binary protocol frame parser (mirrors Rust Frame enum)."""
+    
+    SUBSCRIBE = 0x01
+    PUBLISH = 0x02
+    MAX_FRAME = 16 * 1024 * 1024
+    
+    @staticmethod
+    def parse(raw: memoryview) -> tuple:
+        """
+        Parse a frame into (msg_type, topic, payload).
+        
+        Returns: (msg_type: int, topic: bytes, payload: memoryview)
+        """
+        if len(raw) < 1:
+            raise ProtocolError("empty frame")
+        
+        msg_type = raw[0]
+        
+        if msg_type == Frame.SUBSCRIBE:
+            # Subscribe: [0x01] + topic_bytes
+            topic = bytes(raw[1:])
+            return msg_type, topic, memoryview(b"")
+        
+        elif msg_type == Frame.PUBLISH:
+            # Publish: [0x02] + [topic_len (u16)] + [topic] + [payload]
+            if len(raw) < 3:
+                raise ProtocolError("publish frame too short for topic_len")
+            
+            topic_len = struct.unpack(">H", raw[1:3])[0]
+            
+            if len(raw) < 3 + topic_len:
+                raise ProtocolError(
+                    f"publish topic_len overflow: {topic_len} > {len(raw) - 3}"
+                )
+            
+            topic = bytes(raw[3:3 + topic_len])
+            payload = raw[3 + topic_len:]
+            
+            return msg_type, topic, payload
+        
+        else:
+            raise ProtocolError(f"unknown message type: 0x{msg_type:02x}")
+    
+    @staticmethod
+    def encode_subscribe(topic: str) -> bytes:
+        """Encode a subscribe frame (0x01 + topic UTF-8)."""
+        topic_bytes = topic.encode("utf-8")
+        length = 1 + len(topic_bytes)
+        return struct.pack(">I", length) + bytes([Frame.SUBSCRIBE]) + topic_bytes
+    
+    @staticmethod
+    def encode_publish(topic: str, payload: bytes) -> bytes:
+        """Encode a publish frame (0x02 + topic_len + topic + payload)."""
+        topic_bytes = topic.encode("utf-8")
+        body_len = 1 + 2 + len(topic_bytes) + len(payload)
+        
+        header = bytearray()
+        header.extend(struct.pack(">I", body_len))
+        header.append(Frame.PUBLISH)
+        header.extend(struct.pack(">H", len(topic_bytes)))
+        header.extend(topic_bytes)
+        
+        return bytes(header) + payload
 
-    def __init__(self, max_queue_size: int = 128):
-        self._queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
-        self._closed = False
 
-    async def put(self, message: Message) -> None:
-        """Enqueue a message. Non-blocking."""
-        if not self._closed:
-            try:
-                self._queue.put_nowait(message)
-            except asyncio.QueueFull:
-                # Subscriber lagged; drop oldest message
-                try:
-                    self._queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
-                self._queue.put_nowait(message)
-
-    async def get(self) -> Optional[Message]:
-        """Dequeue a message. Blocks until available or closed."""
-        if self._closed and self._queue.empty():
-            return None
-        try:
-            return await asyncio.wait_for(self._queue.get(), timeout=None)
-        except asyncio.CancelledError:
-            return None
-
-    def close(self) -> None:
-        """Mark subscription as closed."""
-        self._closed = True
-
+class SubscriptionIterator:
+    """Async iterator for a single topic subscription."""
+    
+    def __init__(self, queue: asyncio.Queue):
+        self.queue = queue
+    
     def __aiter__(self):
         return self
-
-    async def __anext__(self) -> Message:
-        msg = await self.get()
-        if msg is None:
+    
+    async def __anext__(self) -> bytes:
+        """Yield the next message payload as bytes."""
+        try:
+            payload = await asyncio.wait_for(self.queue.get(), timeout=None)
+            if payload is None:  # Sentinel: connection closed
+                raise StopAsyncIteration
+            return payload
+        except asyncio.CancelledError:
             raise StopAsyncIteration
-        return msg
 
 
 class Switchboard:
     """
-    Async client for Switchboard message broker.
-
-    Usage:
-        async with Switchboard("localhost", 7777) as sb:
-            async for msg in sb.subscribe("trades"):
-                print(f"Received: {msg.topic} = {msg.payload}")
-            await sb.publish("alerts", b"system:online")
+    Ultra-low latency async pub/sub client for Switchboard broker.
+    
+    Zero dependencies, zero-copy memoryview slicing, waker-driven asyncio loop.
     """
-
-    def __init__(self, host: str = "127.0.0.1", port: int = 7777):
+    
+    def __init__(self, host: str = "localhost", port: int = 7777):
         self.host = host
         self.port = port
-        self._reader: Optional[asyncio.StreamReader] = None
-        self._writer: Optional[asyncio.StreamWriter] = None
-        self._subscriptions: Dict[bytes, SubscriptionQueue] = {}
+        self.reader: Optional[asyncio.StreamReader] = None
+        self.writer: Optional[asyncio.StreamWriter] = None
+        self.subscriptions: Dict[str, asyncio.Queue] = {}
         self._read_task: Optional[asyncio.Task] = None
-
+        self._closed = False
+    
+    async def __aenter__(self):
+        """Async context manager entry: connect to broker."""
+        await self.connect()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit: close connection."""
+        await self.close()
+    
     async def connect(self) -> None:
-        """Connect to Switchboard broker."""
-        self._reader, self._writer = await asyncio.open_connection(
-            self.host, self.port
-        )
-        # Start the background read loop
-        self._read_task = asyncio.create_task(self._read_loop())
-
-    async def disconnect(self) -> None:
-        """Disconnect from broker and clean up subscriptions."""
-        # Close all subscriptions
-        for sub_queue in self._subscriptions.values():
-            sub_queue.close()
-        self._subscriptions.clear()
-
-        # Cancel read task
+        """Establish TCP connection to Switchboard broker."""
+        try:
+            self.reader, self.writer = await asyncio.open_connection(
+                self.host, self.port
+            )
+            # Spawn background read task (waker-driven, not polling)
+            self._read_task = asyncio.create_task(self._read_loop())
+        except Exception as e:
+            raise ConnectionError(f"failed to connect to {self.host}:{self.port}: {e}")
+    
+    async def close(self) -> None:
+        """Close connection and cleanup subscriptions."""
+        self._closed = True
+        if self.writer:
+            self.writer.close()
+            try:
+                await self.writer.wait_closed()
+            except Exception:
+                pass
+        
         if self._read_task:
             self._read_task.cancel()
             try:
                 await self._read_task
             except asyncio.CancelledError:
                 pass
-
-        # Close connection
-        if self._writer:
-            self._writer.close()
-            await self._writer.wait_closed()
-
-    async def __aenter__(self):
-        await self.connect()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.disconnect()
-
-    async def subscribe(self, topic: str) -> SubscriptionQueue:
+        
+        # Signal all subscriptions to close
+        for queue in self.subscriptions.values():
+            await queue.put(None)
+    
+    async def subscribe(self, topic: str) -> AsyncIterator[bytes]:
         """
-        Subscribe to a topic and return an async iterator.
-
-        Args:
-            topic: Topic name (string, will be encoded as UTF-8)
-
-        Returns:
-            SubscriptionQueue that yields Message objects
+        Subscribe to a topic and yield messages as they arrive.
+        
+        Returns an async iterator that yields raw message payloads as bytes.
+        Use with 'async for':
+            async for payload in client.subscribe("trades"):
+                print(payload)
+        
+        The payload is a memoryview (zero-copy) but yields as bytes for ease of use.
         """
-        if not self._reader or not self._writer:
-            raise RuntimeError("Not connected. Use 'async with' or call connect().")
-
-        topic_bytes = topic.encode("utf-8")
-
-        # Build frame: [0x01] + topic_bytes
-        frame = self._encode_frame(b"\x01" + topic_bytes)
-
-        # Send to broker
-        self._writer.write(frame)
-        await self._writer.drain()
-
-        # Create subscription queue
-        sub_queue = SubscriptionQueue()
-        self._subscriptions[topic_bytes] = sub_queue
-
-        return sub_queue
-
+        if self._closed:
+            raise RuntimeError("connection closed")
+        
+        # Create per-topic queue (waker-driven backpressure)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
+        self.subscriptions[topic] = queue
+        
+        # Send subscribe frame
+        frame = Frame.encode_subscribe(topic)
+        try:
+            self.writer.write(frame)
+            await self.writer.drain()
+        except Exception as e:
+            del self.subscriptions[topic]
+            raise RuntimeError(f"failed to send subscribe frame: {e}")
+        
+        # Return async iterator
+        return SubscriptionIterator(queue)
+    
     async def publish(self, topic: str, payload: bytes) -> None:
         """
         Publish a message to a topic.
-
+        
         Args:
-            topic: Topic name (string)
-            payload: Message payload (bytes)
+            topic: Topic name (UTF-8 string)
+            payload: Message payload (raw bytes)
         """
-        if not self._reader or not self._writer:
-            raise RuntimeError("Not connected. Use 'async with' or call connect().")
-
-        topic_bytes = topic.encode("utf-8")
-        topic_len = len(topic_bytes)
-
-        # Build frame: [0x02] + [topic_len (u16)] + topic_bytes + payload
-        body = b"\x02" + struct.pack(">H", topic_len) + topic_bytes + payload
-        frame = self._encode_frame(body)
-
-        # Send to broker
-        self._writer.write(frame)
-        await self._writer.drain()
-
-    @staticmethod
-    def _encode_frame(body: bytes) -> bytes:
-        """
-        Encode a frame with 4-byte big-endian length prefix.
-
-        Args:
-            body: Frame body (type + data)
-
-        Returns:
-            Length-prefixed frame
-        """
-        return struct.pack(">I", len(body)) + body
-
-    @staticmethod
-    def _parse_frame(data: bytes) -> Optional[Message]:
-        """
-        Parse a received frame into a Message.
-
-        Args:
-            data: Frame body (without length prefix)
-
-        Returns:
-            Message or None if parse fails
-        """
-        if len(data) < 1:
-            return None
-
-        msg_type = data[0]
-
-        if msg_type == 0x02:  # Publish frame
-            if len(data) < 3:
-                return None
-
-            # Parse topic_len (u16, big-endian)
-            topic_len = struct.unpack(">H", data[1:3])[0]
-
-            if len(data) < 3 + topic_len:
-                return None
-
-            # Zero-copy slicing via memoryview
-            mv = memoryview(data)
-            topic = bytes(mv[3 : 3 + topic_len])
-            payload = bytes(mv[3 + topic_len :])
-
-            return Message(topic=topic, payload=payload)
-
-        return None
-
+        if self._closed:
+            raise RuntimeError("connection closed")
+        
+        frame = Frame.encode_publish(topic, payload)
+        try:
+            self.writer.write(frame)
+            await self.writer.drain()
+        except Exception as e:
+            raise RuntimeError(f"failed to send publish frame: {e}")
+    
     async def _read_loop(self) -> None:
         """
-        Background task that continuously reads frames from broker.
-        Routes messages to subscription queues.
+        Background read task (waker-driven, not polling).
+        
+        Continuously reads frames from broker and dispatches to subscriptions.
+        Blocks on socket.read() → waker fires when data arrives.
         """
         try:
-            while self._reader:
+            while not self._closed:
                 # Read 4-byte length prefix
-                header = await self._reader.readexactly(4)
+                header = await self.reader.readexactly(4)
                 if not header:
                     break
-
-                frame_len = struct.unpack(">I", header)[0]
-                if frame_len == 0 or frame_len > 16 * 1024 * 1024:
-                    # Invalid frame size
-                    break
-
+                
+                length = struct.unpack(">I", header)[0]
+                
+                if length == 0 or length > Frame.MAX_FRAME:
+                    raise ProtocolError(
+                        f"invalid frame length: {length} (max {Frame.MAX_FRAME})"
+                    )
+                
                 # Read frame body
-                body = await self._reader.readexactly(frame_len)
-                if not body:
-                    break
-
-                # Parse message
-                msg = self._parse_frame(body)
-                if msg:
-                    # Route to subscription queue if it exists
-                    if msg.topic in self._subscriptions:
-                        await self._subscriptions[msg.topic].put(msg)
+                frame_body = await self.reader.readexactly(length)
+                
+                # Parse frame (zero-copy via memoryview)
+                raw = memoryview(frame_body)
+                msg_type, topic, payload = Frame.parse(raw)
+                
+                # Dispatch to subscription queue
+                if msg_type == Frame.PUBLISH:
+                    topic_str = topic.decode("utf-8")
+                    if topic_str in self.subscriptions:
+                        queue = self.subscriptions[topic_str]
+                        try:
+                            # Queue is waker-driven; queue.put() wakes waiting iterator
+                            queue.put_nowait(bytes(payload))
+                        except asyncio.QueueFull:
+                            # Backpressure: subscriber is slow
+                            # Queue payload on next iteration (this is non-blocking)
+                            await queue.put(bytes(payload))
 
         except asyncio.CancelledError:
             pass

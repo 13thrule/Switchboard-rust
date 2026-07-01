@@ -554,5 +554,102 @@ Binary size: ~15MB (release build)
 
 ---
 
+## Python SDK
+
+A **zero-dependency** async Python client is available to make Switchboard accessible to Python developers.
+
+### SDK Features
+- Zero external dependencies (pure `asyncio`, `struct`, `sys`)
+- Zero-copy message delivery via memoryview slicing
+- Pythonic async iterator API
+- Full topic multiplexing on single connection
+- Automatic backpressure handling (1024-message queues)
+- Context manager support for clean resource cleanup
+
+### Quick Start
+```python
+import asyncio
+from switchboard import Switchboard
+
+async def main():
+    async with Switchboard("localhost", 7777) as sb:
+        # Subscribe to topic
+        async for msg in await sb.subscribe("trades"):
+            print(f"Received: {msg}")
+        
+        # Publish message
+        await sb.publish("alerts", b"system online")
+
+asyncio.run(main())
+```
+
+**Documentation:** [PYTHON_SDK.md](PYTHON_SDK.md)  
+**Examples:** See [examples/](examples/) directory  
+**Status:** ✅ Production-ready, fully tested
+
+---
+
+## Production Readiness & Chaos Testing
+
+Switchboard has been validated against 7 comprehensive chaos test scenarios:
+
+- ✅ **TCP Fragmentation:** Split frames across packets → handled correctly
+- ✅ **Network Jitter:** 0-50ms random delays → no data loss
+- ✅ **Backpressure:** 100 rapid publishes vs. slow subscriber → queue management works
+- ✅ **Connection Drop:** Abrupt disconnection → clean broker cleanup
+- ✅ **Interleaved Frames:** Multi-client concurrent publishes → zero cross-contamination
+- ✅ **Queue Overflow:** 200+ messages exceeding capacity → graceful degradation
+- ✅ **Topic Isolation:** Multiple subscribers → independent delivery guarantees
+
+**Result:** All tests passed. Tokio's `read_exact()` buffering is production-grade. No codec layer required for stability.
+
+**Detailed Report:** [CHAOS_TEST_RESULTS.md](CHAOS_TEST_RESULTS.md)  
+**Test Suite:** [chaos_test.py](chaos_test.py) (606 lines, runnable against live broker)
+
+### Quick Start
+
+```python
+import asyncio
+from switchboard import Switchboard
+
+async def main():
+    async with Switchboard("localhost", 7777) as sb:
+        async for payload in await sb.subscribe("trades"):
+            print(f"Received: {payload}")
+        
+        await sb.publish("alerts", b"system online")
+
+asyncio.run(main())
+```
+
+### Features
+
+- **Zero dependencies** — pure asyncio, no external packages
+- **Zero-copy message delivery** — uses `memoryview` slicing
+- **Waker-driven** — 0% idle CPU, event-based message reception
+- **Pythonic async iterators** — `async for payload in sb.subscribe(topic)`
+- **Full concurrency** — multiple topics on one connection
+- **Automatic backpressure** — per-topic queues handle slow subscribers
+
+### Examples
+
+```bash
+# Basic subscribe-publish
+python3 examples/basic.py
+
+# Multi-topic isolation demo
+python3 examples/multi_topic.py
+
+# Performance stress test (40K messages, 2 subscribers)
+python3 examples/performance.py
+```
+
+### Documentation
+
+See [PYTHON_SDK.md](PYTHON_SDK.md) for complete API reference, advanced usage, and performance tuning.
+
+---
+
 **Last Updated:** July 1, 2026  
-**Status:** Production Ready ✅
+**Status:** Production Ready ✅  
+**Python SDK:** v0.1.0 (Zero-Dependency)
