@@ -414,7 +414,8 @@
       });
 
       socket.addEventListener('error', e => {
-        log(`Connection error: ${e && e.message ? e.message : 'Unknown error'}`, 'error');
+        const errorMsg = e && e.message ? e.message : 'Failed to connect (check if server is running on ws://localhost:7777)';
+        log(`Connection error: ${errorMsg}`, 'error');
         document.getElementById('connect').textContent = '🔗 Connect';
         updateStatus();
       });
