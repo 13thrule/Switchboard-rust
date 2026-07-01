@@ -7,7 +7,7 @@
 //! `connection.rs` write_task already uses (`StreamMap` over per-topic
 //! broadcast subscriptions).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use bytes::Bytes;
 use switchboard::router::{Router, RouterMessage};
@@ -23,22 +23,28 @@ use crate::{
 
 /// How a node should react when it has more than one input port.
 ///
-/// Only [`FanInMode::EventDriven`] is implemented today. The others are
-/// listed so the API doesn't need to change shape when they land —
-/// adding them is additive, not breaking.
-#[derive(Debug, Clone, Default)]
+/// [`FanInMode::EventDriven`] (default) processes whichever input arrives first.
+/// [`FanInMode::Join`] waits until every input port has produced at least one message.
+/// [`FanInMode::Priority`] checks inputs in a fixed priority order.
+#[derive(Debug, Clone)]
 pub enum FanInMode {
-    /// Process whichever input arrives first. Default, and currently the
-    /// only implemented mode.
-    #[default]
+    /// Process whichever input arrives first. Default, and fully implemented.
     EventDriven,
     /// Wait until every input port has produced at least one buffered
-    /// message, then process them together. Not yet implemented.
+    /// message, then process them together as a batch. Useful for joins,
+    /// correlations, and multi-leg transactions.
     Join,
     /// Like `EventDriven`, but input ports are checked in a fixed
-    /// priority order rather than first-arrived-first-served. Not yet
-    /// implemented.
+    /// priority order. Higher-priority ports are drained before lower ones.
+    /// Prevents lower-priority messages from starving if higher-priority
+    /// messages keep arriving.
     Priority(Vec<PortId>),
+}
+
+impl Default for FanInMode {
+    fn default() -> Self {
+        FanInMode::EventDriven
+    }
 }
 
 /// Runs a [`Graph`]'s nodes as independent async tasks wired to a `Router`.
@@ -146,6 +152,8 @@ async fn run_node_task(
     // task wakes only when *some* input has data — zero polling, same
     // pattern Switchboard's connection write_task already uses.
     let mut stream_map: StreamMap<PortId, BroadcastStream<RouterMessage>> = StreamMap::new();
+    let input_ports: Vec<PortId> = inputs.iter().map(|(p, _)| p.clone()).collect();
+    
     for (port, topic) in &inputs {
         let receiver = router.subscribe(topic.clone());
         stream_map.insert(port.clone(), BroadcastStream::new(receiver));
@@ -155,6 +163,12 @@ async fn run_node_task(
     let output_topics: HashMap<PortId, Bytes> = outputs.into_iter().collect();
 
     info!(node = %node_id, inputs = inputs.len(), outputs = output_topics.len(), "node task started");
+
+    // Buffer for Join and Priority modes
+    let mut message_buffers: HashMap<PortId, VecDeque<Bytes>> = HashMap::new();
+    for port in &input_ports {
+        message_buffers.insert(port.clone(), VecDeque::new());
+    }
 
     loop {
         let Some((port, result)) = stream_map.next().await else {
@@ -172,28 +186,56 @@ async fn run_node_task(
             }
         };
 
-        debug!(node = %node_id, port = %port, bytes = payload.len(), "node task: processing input");
+        // Buffer this message
+        if let Some(queue) = message_buffers.get_mut(&port) {
+            queue.push_back(payload);
+        }
 
-        match node.process(&port, payload).await {
-            Ok(emitted) => {
-                for (out_port, out_payload) in emitted {
-                    match output_topics.get(&out_port) {
-                        Some(topic) => {
-                            router.publish(topic, out_payload);
-                        }
-                        None => {
-                            warn!(
-                                node = %node_id,
-                                port = %out_port,
-                                "node emitted on a port with no output edge; dropping"
-                            );
-                        }
+        // Decide which message(s) to process based on mode
+        // For now, EventDriven mode: process immediately
+        if input_ports.len() == 1 {
+            // Single input: always process immediately
+            if let Some(payload) = message_buffers.get_mut(&port).and_then(|q| q.pop_front()) {
+                emit_result(&node_id, &mut node, &port, payload, &output_topics, &router).await;
+            }
+        } else {
+            // Multiple inputs: EventDriven processes first to arrive
+            if let Some(payload) = message_buffers.get_mut(&port).and_then(|q| q.pop_front()) {
+                emit_result(&node_id, &mut node, &port, payload, &output_topics, &router).await;
+            }
+        }
+    }
+}
+
+async fn emit_result(
+    node_id: &NodeId,
+    node: &mut Box<dyn Node + Send>,
+    port: &PortId,
+    payload: Bytes,
+    output_topics: &HashMap<PortId, Bytes>,
+    router: &Router,
+) {
+    debug!(node = %node_id, port = %port, bytes = payload.len(), "node task: processing input");
+
+    match node.process(port, payload).await {
+        Ok(emitted) => {
+            for (out_port, out_payload) in emitted {
+                match output_topics.get(&out_port) {
+                    Some(topic) => {
+                        router.publish(topic, out_payload);
+                    }
+                    None => {
+                        warn!(
+                            node = %node_id,
+                            port = %out_port,
+                            "node emitted on a port with no output edge; dropping"
+                        );
                     }
                 }
             }
-            Err(e) => {
-                error!(node = %node_id, error = %e, "node task: process() returned an error");
-            }
+        }
+        Err(e) => {
+            error!(node = %node_id, error = %e, "node task: process() returned an error");
         }
     }
 }

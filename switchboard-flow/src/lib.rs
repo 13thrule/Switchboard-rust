@@ -42,8 +42,10 @@ pub mod executor;
 pub mod graph;
 pub mod ids;
 pub mod node;
+pub mod yaml_loader;
 
 pub use executor::{FanInMode, GraphExecutor, RunningGraph};
 pub use graph::{Edge, Graph, GraphBuilder};
 pub use ids::{NodeId, PortId};
 pub use node::Node;
+pub use yaml_loader::YamlGraph;
