@@ -24,8 +24,7 @@ pub use lifecycle::Runtime;
 
 use anyhow::Result;
 use switchboard::router::Router;
-use switchboard_flow::{GraphExecutor, YamlGraph};
-use tracing::info;
+use switchboard_flow::YamlGraph;
 
 /// Create and start a runtime from a YAML graph definition file
 pub async fn from_yaml_file(path: &str) -> Result<Runtime> {

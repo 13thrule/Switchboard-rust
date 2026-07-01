@@ -1,15 +1,9 @@
 //! YAML graph loading — describe dataflow pipelines in declarative configuration.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    graph::{Edge, Graph, GraphBuilder},
-    ids::{NodeId, PortId},
-};
 
 /// A YAML-serializable graph definition.
 /// Allows describing nodes and edges declaratively without writing Rust code.

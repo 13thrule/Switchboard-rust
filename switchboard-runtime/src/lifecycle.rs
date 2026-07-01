@@ -2,10 +2,10 @@
 
 use anyhow::{anyhow, Result};
 use switchboard::router::Router;
-use switchboard_flow::{GraphExecutor, RunningGraph, YamlGraph};
+use switchboard_flow::{RunningGraph, YamlGraph};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Manages the lifecycle of a Switchboard dataflow graph
 pub struct Runtime {

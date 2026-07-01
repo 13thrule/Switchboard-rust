@@ -1,0 +1,80 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+:root {
+  --bg: #0B0E13;
+  --panel: #11131A;
+  --accent: #4C8BF5;
+  --accent-2: #7EE787;
+  --text: #E6E6E6;
+  --muted: #9AA3B2;
+  --warn: #F59E0B;
+  --ok: #22C55E;
+  --radius: 12px;
+  --glass: rgba(255,255,255,0.03);
+  --glass-hover: rgba(255,255,255,0.06);
+}
+
+* {
+  @apply font-ui;
+}
+
+code, pre {
+  @apply font-mono;
+}
+
+body {
+  @apply bg-bg text-text;
+  background: linear-gradient(135deg, #0B0E13 0%, #0F1219 100%);
+}
+
+/* Glass morphism */
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.glass:hover {
+  background: var(--glass-hover);
+}
+
+/* Smooth transitions */
+.transition-smooth {
+  transition: all 180ms cubic-bezier(.2,.9,.3,1);
+}
+
+/* Accent glow */
+.glow-accent {
+  box-shadow: 0 0 20px rgba(76,139,245,0.2);
+}
+
+.glow-accent-2 {
+  box-shadow: 0 0 20px rgba(126,231,135,0.2);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.02);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.15);
+}
+
+/* Selection */
+::selection {
+  background: rgba(76,139,245,0.3);
+  color: var(--text);
+}

@@ -16,6 +16,7 @@ A **zero-copy, event-driven message broker** built in Rust for blazingly fast in
 - 📊 **Phase 8a:** Dataflow Graph Engine — Zero-copy pipelines with Join/Priority fan-in modes & YAML configuration
 - 🧠 **Phase 8b:** LLM Integration Layer — Binary protocol for LLM inference with Python/Rust adapters + stub servers
 - ⚙️ **Phase 8c:** Runtime Lifecycle Manager — Graceful startup/shutdown with YAML configuration & state machine
+- 🖥️ **Switchboard Studio:** Real-time visual console for chat, pipeline flow, metrics, and debugging
 - 🎯 **44/44 tests passing** — Fully validated across TCP, WebSocket, SHM, pattern matching, dataflow, and runtime management
 
 > 🎮 **[Try Live Demo](https://13thrule.github.io/Switchboard-rust/demo/)** — No installation needed! | 📖 **[Landing Page](https://13thrule.github.io/Switchboard-rust/)** | 📚 **[Quick Start](#quickstart-try-it-now)** ⭐ Star the repo if you find it useful!
@@ -132,20 +133,28 @@ Instead of photocopies, Switchboard uses a **magic glass table**. When a message
 ## Project Structure
 
 ```
-switchboard_refactored/switchboard/
-├── Cargo.toml              # Dependencies & build config
-└── src/
-    ├── main.rs             # Server & CLI client
-    ├── router.rs           # Lock-free topic registry & broadcast routing
-    ├── connection.rs       # Per-connection async task (StreamMap multiplexing)
-    ├── protocol.rs         # Binary protocol parser (zero-copy frame extraction)
-    ├── state.rs            # Connection & message state machines
-    ├── trie_router.rs      # Lock-free wildcard pattern matching (Phase 5)
-    ├── transport/
-    │   ├── mod.rs          # Transport trait abstraction
-    │   └── shm.rs          # Shared memory IPC backend (Phase 4)
-    └── bin/
-        └── bench_publisher.rs  # Benchmark publisher for throughput testing
+Switchboard-rust/
+├── switchboard_refactored/switchboard/   # Core broker (TCP/WS/SHM + trie router)
+├── switchboard-flow/                      # Phase 8a dataflow execution engine
+├── switchboard-llm-fabric/                # Phase 8b LLM protocol + adapters + stubs
+├── switchboard-runtime/                   # Phase 8c lifecycle/config runtime wrapper
+├── switchboard-studio/                    # Visual operations UI (Svelte + Tailwind)
+├── demo/                                  # Browser demo page (GitHub Pages)
+├── docs/                                  # TLS and project docs
+└── tools/                                 # Bench and helper scripts
+```
+
+### Core Broker Internals (`switchboard_refactored/switchboard/src`)
+
+```
+main.rs             # Server entrypoint + CLI modes
+router.rs           # Lock-free topic routing + queue semantics
+connection.rs       # Per-connection StreamMap-driven multiplexing
+protocol.rs         # Binary frame parser and encoder
+state.rs            # Connection/message state machines
+trie_router.rs      # O(depth) wildcard routing tree
+transport/shm.rs    # Shared memory ring transport
+bin/bench_publisher.rs
 ```
 
 ## Test Suite & Validation ✅
@@ -600,6 +609,38 @@ python3 openai_compat_server.py --port 8000
 
 **Next Steps:** Validate against real LLM runtime (start with llama.cpp), implement error handling, benchmark latency.
 
+### Switchboard Studio: Visual Operations Console (`switchboard-studio/`)
+**Status:** ✅ **WORKING BUILD** — production bundle verified with Vite
+
+Studio is a dark, high-contrast operational UI for live chat, pipeline introspection, and debugging.
+
+**Implemented UX Surfaces:**
+- **Three-column layout:** Navigation + Canvas + Metrics
+- **Mode switching:** Focus, Engineer, Presentation
+- **Chat canvas:** Topic/latency badges with animated message stream
+- **Pipeline visualizer:** Clickable graph nodes with keyboard support
+- **Bottom composer:** Prompt send surface for live publish flows
+- **Status bar:** Connection state + active model micro-info
+
+**Tech Stack:**
+- Svelte 4 + Vite 5 + Tailwind CSS
+- Native WebSocket client for Switchboard protocol framing
+- Reactive Svelte stores for connection/messages/metrics state
+
+**Run Locally:**
+```bash
+cd switchboard-studio
+npm install
+npm run dev
+```
+
+**Build Check:**
+```bash
+npm run build
+```
+
+Open `http://localhost:5173` and connect to a running broker at `ws://localhost:7777`.
+
 ### Phase 8c: Runtime Lifecycle Manager (`switchboard-runtime/`)
 **Status:** ✅ **PRODUCTION READY** — 3/3 tests passing, full feature complete
 
@@ -716,11 +757,12 @@ cargo build --release
 | Uncontrolled shutdown | **Phase 8c: Runtime Lifecycle** — State machine with graceful termination | Drain messages, cleanup resources |
 | Configuration management | **YAML RuntimeConfig** — Define behavior in files | DevOps-friendly, no code recompilation |
 
-**Together, these three phases enable:**
+**Together, the Phase 8 modules + Studio enable:**
 - ✅ End-to-end LLM pipelines from prompt → tokenization → inference → output
 - ✅ Multi-model orchestration with priority routing and load balancing
 - ✅ Production deployments with proper lifecycle management and monitoring
 - ✅ Zero-copy message passing throughout the entire pipeline
+- ✅ Real-time visual operations and debugging for demos and incident response
 
 ## WebSocket Gateway
 
@@ -1105,9 +1147,9 @@ See [PYTHON_SDK.md](PYTHON_SDK.md) for complete API reference, advanced usage, a
 
 ---
 
-## Summary: What's New in Phase 8
+## Summary: What's New in Phase 8 + Studio
 
-**Three production-ready companion modules** unlock enterprise-grade LLM and dataflow capabilities:
+**Four production-ready modules** unlock enterprise-grade messaging, dataflow, LLM orchestration, and operations UX:
 
 1. **Dataflow Graphs** (switchboard-flow/)
    - Compose complex pipelines declaratively with YAML or Rust
@@ -1120,9 +1162,14 @@ See [PYTHON_SDK.md](PYTHON_SDK.md) for complete API reference, advanced usage, a
    - Stub servers + OpenAI compatibility for testing
 
 3. **Runtime Lifecycle** (switchboard-runtime/)
-   - Graceful startup/shutdown with configurable timeout
-   - YAML-based configuration management
-   - Production-ready state machine
+   - Graceful startup/shutdown with explicit runtime states
+   - YAML-configurable behavior for deploy-time tuning
+   - Foundation for orchestration and hot-reload workflows
+
+4. **Visual Operations Console** (switchboard-studio/)
+   - Real-time chat/pipeline/metrics interface for operators and developers
+   - Keyboard-accessible graph inspection and streaming message view
+   - Fast local build with Svelte + Tailwind + Vite
 
 **Test Coverage:** 44/44 passing (34 core + 7 dataflow + 3 runtime)  
 **Performance:** 2µs SHM latency, 851k msg/s throughput, 0% idle CPU  
